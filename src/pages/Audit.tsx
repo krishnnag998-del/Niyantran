@@ -62,6 +62,11 @@ export default function AuditPage() {
             </tr>
             {open === e.seq && <tr className="audit-detail"><td colSpan={7}>
               <div className="hashes"><span>Hash <code>{e.hash}</code></span><span>Previous <code>{e.prevHash}</code></span></div>
+              {e.meta && <div className="hashes"><span>Correlation <code>{e.meta.correlationId}</code></span>
+                {e.meta.findingId && <span>Finding <code>{e.meta.findingId}</code>{e.meta.outcome ? ` · ${e.meta.outcome}` : ""}</span>}
+                {e.meta.clause && <span>Clause <code>{e.meta.clause.code}</code></span>}
+                {e.meta.evidence?.map(x => <span key={x.docId}>Evidence <code>{x.fileName} v{x.version} · {x.sha256}</code></span>)}
+                {e.meta.comment && <span>Reason: {e.meta.comment}</span>}</div>}
               {(() => { const c = changes(e); return c.length === 0 ? <p className="muted">No field-level changes recorded.</p> : <table className="compact diff"><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>{c.map(x => <tr key={x.key}><td>{x.key}</td><td><code>{x.before}</code></td><td><code>{x.after}</code></td></tr>)}</tbody></table>; })()}
             </td></tr>}
           </Fragment>)}

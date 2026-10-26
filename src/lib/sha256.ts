@@ -12,8 +12,10 @@ const K = new Uint32Array([
 
 const rotr = (x: number, n: number) => (x >>> n) | (x << (32 - n));
 
-export function sha256(message: string): string {
-  const bytes = new TextEncoder().encode(message);
+export const sha256 = (message: string): string => sha256Bytes(new TextEncoder().encode(message));
+
+// Hashes raw bytes, used to fingerprint uploaded evidence files exactly as received.
+export function sha256Bytes(bytes: Uint8Array): string {
   const padded = new Uint8Array(((bytes.length + 9 + 63) >> 6) << 6);
   padded.set(bytes);
   padded[bytes.length] = 0x80;
