@@ -75,8 +75,7 @@ function Sidebar({ page, params, go, open, close, collapsed, toggle }: { page: s
     : e.page === "Aaj Ka Kaam" ? myTasks : e.page === "Alerts & Escalations" ? openAlerts : 0;
   return <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Main navigation">
     <div className="identity">
-      {/* Placeholder: place the official AICTE logo at public/brand/aicte-logo.svg and swap this block for an <img>. */}
-      <div className="aicte-mark" role="img" aria-label="AICTE logo placeholder">AICTE</div>
+      <img className="aicte-logo" src="/brand/aicte-logo.png" alt="AICTE logo" />
       <div className="identity-text"><strong>All India Council for Technical Education</strong><span>Ministry of Education, Government of India</span></div>
       <button className="icon mobile-close" onClick={close} aria-label="Close menu"><X size={18}/></button>
     </div>
