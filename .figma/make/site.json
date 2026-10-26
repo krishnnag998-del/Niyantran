@@ -1,0 +1,10 @@
+{
+  "description": "Helps AICTE officers and institutions manage approval workflows, compliance deadlines, EVC visits, and explainable alerts while keeping statutory decisions under human control.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
