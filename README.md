@@ -1,6 +1,41 @@
 # Niyantran
 
+<<<<<<< HEAD
 Regulatory command desk prototype for AICTE approval workflows. Vite + React 19 + TypeScript. All data lives in the browser (`localStorage`); every rule is enforced in the action reducer in `src/lib/store.tsx`, and every action is written to a SHA-256 hash-chained audit trail.
+=======
+Niyantran is a browser-based prototype of a regulatory command desk for AICTE approval workflows. It brings application processing, institution compliance, evidence review, officer tasks, alerts, rulebook management, decisions and audit history into one workspace.
+
+The project uses Vite, React 19 and TypeScript. Firebase Authentication gates access and a read-only Firestore profile assigns each person's officer role. Application/workflow data remains in browser `localStorage`, scoped to the signed-in Firebase account; it is not synchronized between users or devices. Workflow actions are checked by the client-side reducer, and recorded actions are written to a SHA-256 hash-chained audit trail.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    Browser["Browser"]
+    Auth["Firebase Authentication<br/>email/password or Google"]
+    Gate["src/auth/AuthGate.tsx<br/>verify signed-in user and profile"]
+    Profile["Cloud Firestore<br/>profiles/{uid}"]
+    App["src/App.tsx and src/pages/*<br/>workspace UI"]
+    Store["src/lib/store.tsx<br/>workflow actions and validation"]
+    Engine["src/lib/engine.ts<br/>SLA, compliance and alerts"]
+    Evidence["src/lib/evidence.ts<br/>document comparison"]
+    Audit["SHA-256 audit chain"]
+    Local["localStorage<br/>per Firebase UID"]
+
+    Browser --> Auth --> Gate
+    Gate --> Profile
+    Gate --> App
+    App --> Store
+    Store --> Engine
+    Store --> Evidence
+    Store --> Audit
+    Store <--> Local
+```
+
+### Run locally
+
+Requirements: Node.js and pnpm. Copy `.env.example` to `.env.local` and fill it with the Firebase web app configuration, then:
+>>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 
 ```
 pnpm install
@@ -10,6 +45,25 @@ pnpm typecheck
 pnpm build
 ```
 
+<<<<<<< HEAD
+=======
+## Firebase authentication and account setup
+
+1. In Firebase Console, enable **Email/Password** and **Google** under Authentication → Sign-in method. Add the deployed Hosting domain under Authentication → Settings → Authorized domains if it is not already present.
+2. Users can select **Create an account** on the sign-in screen to register with email/password, or sign in with Google. New Firebase Auth accounts do not grant application access by themselves.
+3. For each person, create a Firestore document at `profiles/{Firebase Auth UID}` with string fields `name`, `email`, `phone`, `jobTitle`, `region`, and `institutionAffiliation`, plus `role` and `status`. Use an existing officer role (`Director`, `Regional Officer`, `Scrutiny Officer`, `EVC Coordinator`, or `Committee Member`) and set `status` to `active`. Profiles without an active recognized role are denied access.
+4. Client access to profile documents is read-only. Assign or change roles through Firebase Console/Admin SDK only; do not make role assignment available to end users.
+
+The Cloud Firestore API and a Firestore database must be enabled/created in the Firebase project before profile lookup works. Choose the database location in Firebase Console; location cannot be changed after creation. Deploy the site and profile security rules with:
+
+```
+pnpm build
+firebase deploy --only hosting,firestore:rules --project niyantran-4fee0
+```
+
+The Firebase web configuration is supplied through `.env.local` and is not an Admin SDK credential. Never put service-account keys in the frontend or commit them.
+
+>>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 ## Evidence Intelligence Engine
 
 Decision support for cross-document consistency. It never approves, rejects or verifies anything on its own.
@@ -26,6 +80,7 @@ Field definitions, their source documents and per-application-type applicability
 
 ### Demo (fictional data)
 
+<<<<<<< HEAD
 1. Start with an empty workspace (Settings → reset, or a new browser profile) and choose **Load synthetic demo** on the setup screen. You act as the Demo Scrutiny Officer.
 2. Open **Evidence Intelligence** → the application. The consistency matrix shows the address read from three documents. The NOC says Sector 12, so the location finding is `FAIL` against the labelled demo clause `DEMO-DOC-1` (not an AICTE regulation).
 3. **Approval crash-test** → Run simulation → set the NOC address to "Plot 4, Sector 10, Greater Noida, Uttar Pradesh 201310". The location finding shows as resolved, and the Scrutiny evidence gate goes from 1 to 0 in the simulation only. Go back to the findings: the official result is still `FAIL`.
@@ -36,5 +91,12 @@ Field definitions, their source documents and per-application-type applicability
 ### Limitations
 
 - There is no server. "Server-side" checks run in the reducer, but the officer switcher is not authentication, and someone with access to the browser can edit `localStorage`. The audit chain detects such edits; it does not prevent them.
+=======
+The synthetic scenario builder in `src/lib/demo.ts` contains fictional records and a labelled demo rulebook, not AICTE regulations. It is not automatically loaded into authenticated workspaces. Never use its data as a real application or regulatory reference.
+
+### Limitations
+
+- Firebase Authentication verifies identity, and Firestore controls access to the profile document. Workflow records still live only in browser storage, so users do not share cases across browsers/devices. Client-side workflow checks and the audit chain are not a trusted server boundary; someone with access to browser storage can alter local data. Do not use this prototype as a production statutory decision system.
+>>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 - No OCR. Scanned PDFs and images need manual transcription. Original files are kept only in memory for the session; the stored fingerprint lets an officer match a file to the record.
 - Only document-consistency findings are simulated. SLA, deposit, lease and undertaking checks are not.

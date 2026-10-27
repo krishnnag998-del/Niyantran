@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Activity, Bell, BookOpen, Building2, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileSearch, FileText, Gavel, History, Landmark,
+<<<<<<< HEAD
   LayoutDashboard, ListChecks, Menu, Search, Settings, ShieldCheck, Users, X,
+=======
+  LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, ShieldCheck, UserCheck, Users, X,
+>>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 } from "lucide-react";
 import { ThemeToggleButton } from "@/components/ui/skiper-ui/skiper26";
 import { Badge, Toasts, severityTone } from "@/components/kit";
 import { versionInForce } from "@/lib/engine";
 import { NavContext, type Params } from "@/lib/nav";
 import { useStore } from "@/lib/store";
+import AccessPage from "@/pages/Access";
 import { isMine } from "@/pages/Alerts";
 import AlertsPage from "@/pages/Alerts";
 import ApplicationsPage from "@/pages/Applications";
@@ -22,7 +27,7 @@ import SettingsPage from "@/pages/Settings";
 import Setup from "@/pages/Setup";
 import TasksPage from "@/pages/Tasks";
 
-type NavEntry = { label: string; page: string; icon: typeof LayoutDashboard; stage?: string };
+type NavEntry = { label: string; page: string; icon: typeof LayoutDashboard; stage?: string; directorOnly?: boolean };
 
 // Queue entries are filtered views of the Applications register, not separate modules.
 const NAV: { group: string; items: NavEntry[] }[] = [
@@ -42,13 +47,18 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     { label: "Alerts & Escalations", page: "Alerts & Escalations", icon: Bell },
     { label: "Institutions", page: "Institutions", icon: Building2 },
     { label: "Audit Trail", page: "Audit Trail", icon: History },
+    { label: "Officer Access", page: "Officer Access", icon: UserCheck, directorOnly: true },
   ] },
 ];
 
 const PAGES: Record<string, () => React.ReactElement> = {
   "Dashboard": Dashboard, "Aaj Ka Kaam": TasksPage, "Applications": ApplicationsPage, "Compliance Monitor": CompliancePage,
   "EVC Management": EvcPage, "Evidence Intelligence": EvidencePage, "Rulebook (APH)": RulebookPage, "Alerts & Escalations": AlertsPage, "Audit Trail": AuditPage,
+<<<<<<< HEAD
   "Institutions": InstitutionsPage, "Settings": SettingsPage,
+=======
+  "Institutions": InstitutionsPage, "Settings": SettingsPage, "Officer Access": AccessPage,
+>>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 };
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join("");
@@ -69,12 +79,13 @@ function Colonnade() {
   </svg>;
 }
 
-function Sidebar({ page, params, go, open, close, collapsed, toggle }: { page: string; params: Params; go: (p: string, ps?: Params) => void; open: boolean; close: () => void; collapsed: boolean; toggle: () => void }) {
-  const { state, alerts, me } = useStore();
+function Sidebar({ page, params, go, open, close, collapsed, toggle, onSignOut }: { page: string; params: Params; go: (p: string, ps?: Params) => void; open: boolean; close: () => void; collapsed: boolean; toggle: () => void; onSignOut: () => void }) {
+  const { state, alerts, me, identity } = useStore();
   const myTasks = state.tasks.filter(t => t.status === "open" && t.owner === me?.id).length;
   const openAlerts = alerts.filter(a => !state.alerts[a.id]?.resolvedAt).length;
   const count = (e: NavEntry) => e.stage ? state.applications.filter(a => a.stage === e.stage).length
     : e.page === "Aaj Ka Kaam" ? myTasks : e.page === "Alerts & Escalations" ? openAlerts : 0;
+  const visible = (e: NavEntry) => !e.directorOnly || identity?.role === "Director";
   return <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Main navigation">
     <div className="identity">
       <img className="aicte-logo" src="/brand/aicte-logo.png" alt="AICTE logo" />
@@ -87,7 +98,7 @@ function Sidebar({ page, params, go, open, close, collapsed, toggle }: { page: s
     </div>
     <nav>{NAV.map(g => <div key={g.group} className="nav-group">
       <div className="nav-label">{g.group}</div>
-      {g.items.map(e => { const Icon = e.icon; const n = count(e); const active = isActive(e, page, params);
+      {g.items.filter(visible).map(e => { const Icon = e.icon; const n = count(e); const active = isActive(e, page, params);
         return <button key={e.label} className={`nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} title={collapsed ? e.label : undefined}
           onClick={() => { go(e.page, e.stage ? { stage: e.stage } : {}); close(); }}>
           <Icon size={17}/><span>{e.label}</span>{n > 0 && <i aria-label={`${n} open`}>{n}</i>}
@@ -97,6 +108,7 @@ function Sidebar({ page, params, go, open, close, collapsed, toggle }: { page: s
     <div className="sidebar-bottom">
       <button className={`nav-item ${page === "Settings" ? "active" : ""}`} title={collapsed ? "Settings" : undefined} onClick={() => { go("Settings"); close(); }}><Settings size={17}/><span>Settings</span></button>
       {me && <button className="profile" onClick={() => { go("Settings"); close(); }} title={collapsed ? `${me.name} · ${me.role}` : undefined}><div className="avatar">{initials(me.name)}</div><div className="profile-text"><strong>{me.name}</strong><span>{me.role} · {me.region}</span></div></button>}
+      <button className="nav-item" title={collapsed ? "Sign out" : undefined} onClick={onSignOut}><LogOut size={17}/><span>Sign out</span></button>
       <button className="collapse-toggle" onClick={toggle} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-pressed={collapsed}>{collapsed ? <ChevronsRight size={16}/> : <><ChevronsLeft size={16}/><span>Collapse</span></>}</button>
     </div>
   </aside>;
@@ -117,7 +129,7 @@ function GlobalSearch({ go }: { go: (p: string, ps?: Params) => void }) {
 }
 
 function Header({ label, mobile, go }: { label: string; mobile: () => void; go: (p: string, ps?: Params) => void }) {
-  const { state, alerts, me, run, now } = useStore();
+  const { state, alerts, me, now } = useStore();
   const [bell, setBell] = useState(false);
   const mine = alerts.filter(a => { const rec = state.alerts[a.id]; return !rec?.resolvedAt && !rec?.ackAt && isMine(state, me, a, rec); });
   const rules = versionInForce(state, now);
@@ -136,12 +148,6 @@ function Header({ label, mobile, go }: { label: string; mobile: () => void; go: 
           <button className="link" onClick={() => { setBell(false); go("Alerts & Escalations"); }}>View all alerts</button>
         </div>}
       </div>
-      {me && <label className="user-switch" title="Acting as officer">
-        <span className="avatar small">{initials(me.name)}</span>
-        <select value={me.id} onChange={e => run({ type: "USER_SWITCH", id: e.target.value })} aria-label="Acting as officer">
-          {state.officers.filter(o => o.active).map(o => <option key={o.id} value={o.id}>{o.name} · {o.role}</option>)}
-        </select>
-      </label>}
     </div>
   </header>;
 }
@@ -165,8 +171,8 @@ function OverviewPreloader({ onComplete }: { onComplete: () => void }) {
 
 const readCollapsed = () => { try { return localStorage.getItem("niyantran-sidebar") === "collapsed"; } catch { return false; } };
 
-export default function App() {
-  const { state, now, me } = useStore();
+export default function App({ onSignOut = () => {} }: { onSignOut?: () => void }) {
+  const { state, now, me, identity, run } = useStore();
   const [page, setPage] = useState("Dashboard");
   const [params, setParams] = useState<Params>({});
   const [mobile, setMobile] = useState(false);
@@ -176,14 +182,37 @@ export default function App() {
   const go = useCallback((p: string, ps: Params = {}) => { setPage(p); setParams(ps); window.scrollTo({ top: 0 }); }, []);
   const toggle = () => setCollapsed(c => { try { localStorage.setItem("niyantran-sidebar", c ? "open" : "collapsed"); } catch { /* storage unavailable */ } return !c; });
 
-  if (!state.officers.length || !me) return <><Setup/><Toasts/></>;
+  useEffect(() => {
+    if (!identity) return;
+    const affiliation = state.institutions.find(institution =>
+      [institution.name, institution.code].some(value => value.toLocaleLowerCase() === identity.institutionAffiliation.trim().toLocaleLowerCase()),
+    );
+    const affiliations = affiliation ? [affiliation.id] : [];
+    if (
+      me?.id === identity.uid && me.name === identity.name && me.role === identity.role &&
+      me.region === identity.region && me.email === identity.email &&
+      JSON.stringify(me.affiliations) === JSON.stringify(affiliations)
+    ) return;
+    run({ type: "IDENTITY_SYNC", id: identity.uid, officer: {
+      name: identity.name,
+      role: identity.role,
+      region: identity.region,
+      email: identity.email,
+      affiliations,
+      active: true,
+    } });
+  }, [identity, me?.id, me?.name, me?.role, me?.region, me?.email, me?.affiliations, run, state.institutions]);
+
+  if (!state.officers.length || !me) return identity
+    ? <div className="auth-page"><div className="auth-loading" role="status">Preparing your authenticated workspace…</div><Toasts/></div>
+    : <><Setup/><Toasts/></>;
   const Page = PAGES[page] ?? Dashboard;
   const rules = versionInForce(state, now);
 
   return <NavContext.Provider value={{ page, params, go }}>
     <div className={`app ${collapsed ? "collapsed" : ""}`}>
       <a className="skip-link" href="#main">Skip to content</a>
-      <Sidebar page={page} params={params} go={go} open={mobile} close={() => setMobile(false)} collapsed={collapsed} toggle={toggle}/>
+      <Sidebar page={page} params={params} go={go} open={mobile} close={() => setMobile(false)} collapsed={collapsed} toggle={toggle} onSignOut={onSignOut}/>
       {mobile && <div className="mobile-overlay" onClick={() => setMobile(false)}/>}
       <div className="shell">
         <Header label={params.appId && page === "Applications" ? "Case file" : pageLabel(page, params)} mobile={() => setMobile(true)} go={go}/>
