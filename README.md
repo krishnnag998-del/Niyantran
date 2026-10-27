@@ -1,6 +1,12 @@
 # Niyantran
 
-Regulatory command desk prototype for AICTE approval workflows. Vite + React 19 + TypeScript. All data lives in the browser (`localStorage`); every rule is enforced in the action reducer in `src/lib/store.tsx`, and every action is written to a SHA-256 hash-chained audit trail.
+Niyantran is a browser-based prototype of a regulatory command desk for AICTE approval workflows. It brings application processing, institution compliance, evidence review, officer tasks, alerts, rulebook management, decisions and audit history into one workspace.
+
+The project is built with Vite, React 19 and TypeScript. It has no backend: workspace data is saved in the current browser's `localStorage`. Workflow actions are validated centrally by the store reducer, while SLA, compliance and alert information is derived from the current workspace and rulebook. Every recorded action is added to a SHA-256 hash-chained audit trail.
+
+## Run locally
+
+Requirements: Node.js and pnpm.
 
 ```
 pnpm install
@@ -9,6 +15,55 @@ pnpm test        # Vitest
 pnpm typecheck
 pnpm build
 ```
+
+The first visit opens the setup screen, where you can create an officer profile. To explore the workflow without entering real data, select **Load synthetic demo**. Demo records are fictional and the included demo rulebook is explicitly labelled as non-regulatory.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    Browser["Browser UI"]
+    Entry["src/main.tsx<br/>React, theme and store providers"]
+    App["src/App.tsx<br/>navigation and page shell"]
+    Pages["src/pages/*<br/>dashboard, cases, evidence, compliance,<br/>EVC, tasks, alerts, rulebook and audit"]
+    Store["src/lib/store.tsx<br/>shared state and persistence"]
+    Reducer["Action reducer<br/>workflow validation and state updates"]
+    Engine["src/lib/engine.ts<br/>SLA, compliance, assignment and alert calculations"]
+    Evidence["src/lib/evidence.ts<br/>field extraction, comparison and findings"]
+    Audit["SHA-256 audit chain<br/>src/lib/sha256.ts"]
+    Storage["Browser localStorage<br/>niyantran-state-v1"]
+
+    Browser --> Entry --> App --> Pages
+    Pages -->|"dispatch user action"| Store
+    Store --> Reducer
+    Reducer -->|"accepted action"| Store
+    Reducer -->|"record successful action"| Audit
+    Store -->|"persist workspace"| Storage
+    Storage -->|"load on startup"| Store
+    Store --> Engine
+    Store --> Evidence
+    Engine -->|"derived queues, SLAs and alerts"| Pages
+    Evidence -->|"findings and evidence gates"| Pages
+```
+
+### Main parts
+
+- **Application shell — `src/App.tsx`:** Provides navigation, global search, setup, page selection and the shared workspace layout.
+- **Pages — `src/pages/`:** Present the dashboard, application register and stage queues, Evidence Intelligence, EVC management, compliance monitor, rulebook, tasks, alerts, institutions, settings and audit trail.
+- **State and workflow — `src/lib/store.tsx`:** Holds the typed workspace state and applies user actions through a central reducer. It checks permissions and workflow preconditions, then records successful changes. A rejected workflow action does not partially update state.
+- **Rules and derived views — `src/lib/engine.ts`:** Calculates information such as stage timing, SLA status, assignments, compliance status and alerts from applications, institutions and the applicable rule version.
+- **Evidence review — `src/lib/evidence.ts`:** Extracts supported labelled text fields, compares values across documents, creates explainable findings and evaluates hypothetical simulation changes.
+- **Persistence and audit — `src/lib/store.tsx` and `src/lib/sha256.ts`:** Save the workspace in browser storage and append actions to a hash-linked audit chain. The audit integrity check can detect changes to recorded events; it does not prevent someone from changing browser data.
+
+## How the workflow works
+
+1. **Set up a workspace.** Create an officer profile or load the fictional demo. The selected officer is a local prototype role, not an authenticated account.
+2. **Configure institutions and rules.** Maintain institution records and draft, review and publish rule versions. Applications retain the rule version they were created against unless an authorized officer migrates them.
+3. **Register and assign applications.** Create LoA or EoA cases, attach checklist documents and undertakings, and assign officers to workflow stages.
+4. **Process the case.** Cases move through **Scrutiny → EVC → Committee → Decision**. Officers handle stage work, deficiencies and responses, site visits and reports, committee recommendations, and decision drafting. Authorized roles sign final outcomes.
+5. **Monitor work and compliance.** The engine derives SLA clocks, due dates, compliance indicators, alerts and escalations from current case data and rule versions. The task and alert views provide officer work queues.
+6. **Review and record evidence.** Evidence Intelligence compares supported fields between documents. Officers verify transcriptions against originals and record findings reviews; unresolved findings can block progression from Scrutiny.
+7. **Inspect history or test scenarios.** Real actions are written to the audit trail. Evidence simulations show hypothetical changes separately and do not alter the official application or its audit history.
 
 ## Evidence Intelligence Engine
 
@@ -35,6 +90,7 @@ Field definitions, their source documents and per-application-type applicability
 
 ### Limitations
 
-- There is no server. "Server-side" checks run in the reducer, but the officer switcher is not authentication, and someone with access to the browser can edit `localStorage`. The audit chain detects such edits; it does not prevent them.
+- There is no server. Workflow checks run in the client-side reducer, not on a trusted server. The officer switcher is not authentication, and someone with access to the browser can edit `localStorage`. The audit chain detects changes to audit events; it does not prevent edits to browser data.
+- This is a prototype workflow system, not an official AICTE service or a replacement for statutory review by authorized officers. Demo rule clauses and records are fictional.
 - No OCR. Scanned PDFs and images need manual transcription. Original files are kept only in memory for the session; the stored fingerprint lets an officer match a file to the record.
 - Only document-consistency findings are simulated. SLA, deposit, lease and undertaking checks are not.
