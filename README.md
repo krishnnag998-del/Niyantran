@@ -19,7 +19,7 @@ Live: **https://niyantran-4fee0.web.app**
 7. [Security](#security)
 8. [Run locally](#run-locally)
 9. [Testing](#testing)
-10. [Deployment](#deployment)
+10. [CI/CD and deployment](#cicd-and-deployment)
 11. [First-time Firebase setup](#first-time-firebase-setup)
 12. [Limitations](#limitations)
 
@@ -27,7 +27,10 @@ Live: **https://niyantran-4fee0.web.app**
 
 ## Architecture
 
-Niyantran is a single-page React app hosted on Firebase. **Identity and officer access are server-enforced** (Firebase Authentication and Cloud Firestore security rules). **Case data is held in the browser**, per signed-in account, and every action on it is validated by a reducer and written to a SHA-256 hash-chained audit trail.
+Niyantran is a single-page React app served by Firebase Hosting.
+
+- **Identity and officer access are server-enforced.** Firebase Authentication proves who someone is. Firestore security rules decide what they may read and change.
+- **Case data is held in the browser**, one workspace per signed-in account. Every change goes through a validating reducer and is written to a SHA-256 hash-chained audit trail.
 
 ```mermaid
 flowchart TD
@@ -69,8 +72,9 @@ flowchart TD
 | Access control | Cloud Firestore + `firestore.rules` |
 | Case data | Browser `localStorage`, scoped per Firebase UID |
 | Integrity | SHA-256 hash chain (`src/lib/sha256.ts`, `verifyChain` in `store.tsx`) |
-| Hosting | Firebase Hosting, deployed by GitHub Actions |
-| Tests | Vitest, `@firebase/rules-unit-testing` with the Firestore emulator |
+| Hosting | Firebase Hosting with strict security headers |
+| CI/CD | GitHub Actions: check, build and deploy on `main`; preview builds for pull requests |
+| Tests | Vitest; `@firebase/rules-unit-testing` with the Firestore emulator |
 
 ---
 
@@ -79,7 +83,7 @@ flowchart TD
 ```
 src/
   main.tsx                 Entry point: theme provider + AuthGate
-  App.tsx                  Shell: sidebar, header, page routing
+  App.tsx                  Shell: sidebar, header, page routing (Director section only for Directors)
   auth/AuthGate.tsx        Waits for sign-in, reads profiles/{uid} live, picks the screen to show
   pages/
     Auth.tsx               Sign-in, sign-up with access request, pending / rejected / disabled screens
@@ -98,7 +102,7 @@ src/
     Settings.tsx           Profile, notifications, backup, sign out and clear this browser
   lib/
     firebase.ts            Firebase app from VITE_FIREBASE_* variables
-    profiles.ts            Officer profiles, access requests, Director rules (client side)
+    profiles.ts            Officer profiles, access requests, Director nomination and removal
     useOfficerProfiles.ts  Live profile list and two-person-rule status for Directors
     store.tsx              State, validated actions, audit chain, persistence
     engine.ts              SLA clock, compliance checks, alerts, decision drafts
@@ -108,7 +112,9 @@ src/
 tests/rules/               Security-rules tests (Firestore emulator)
 firestore.rules            Server-side access rules
 firebase.json              Hosting config and security headers
-.github/workflows/         Automatic website deployment
+.github/workflows/
+  firebase-hosting-deploy.yml        Check, build and deploy on every push to main
+  firebase-hosting-pull-request.yml  Preview deploy for pull requests from this repository
 ```
 
 ---
@@ -117,7 +123,7 @@ firebase.json              Hosting config and security headers
 
 Roles: **Director**, **Regional Officer**, **Scrutiny Officer**, **EVC Coordinator**, **Committee Member**.
 
-Signing in with Firebase proves *who* someone is. Their Firestore profile at `profiles/{uid}` decides *whether* they get in and *with which role*. Only a profile with `status: active` and a valid `role` opens the workspace.
+Signing in proves *who* someone is. Their Firestore profile at `profiles/{uid}` decides *whether* they get in and *with which role*. Only a profile with `status: active` and a valid `role` opens the workspace. Everyone, Directors included, uses the same sign-in page; the role on the profile decides what they see.
 
 ```mermaid
 sequenceDiagram
@@ -141,9 +147,9 @@ sequenceDiagram
 | `pending` | Waiting for approval |
 | `rejected` | The reason, and the option to correct and resend |
 | `disabled` | Access disabled |
-| `active` with a valid role | The workspace |
+| `active` with a valid role | The workspace (Directors land on the Director Desk) |
 
-**Directors** land on the **Director Desk** and manage everyone on **Officer Access**: approve or reject requests, edit details (not email, which is tied to the login), send password resets, disable, reactivate, delete, and add someone by account ID. The sidebar badge counts waiting requests and Director nominations needing your confirmation.
+**Directors** manage everyone on **Officer Access**: approve or reject requests, edit details (not email, which is tied to the login), send password resets, disable, reactivate, delete, and add someone by account ID. The sidebar badge counts waiting requests and Director nominations needing your confirmation.
 
 Applicants can only file and revise their **own** request. They can never set their own role or status.
 
@@ -153,20 +159,23 @@ Applicants can only file and revise their **own** request. They can never set th
 
 No single person can grant or remove Director access. `firestore.rules` enforces this on the server; the screens only guide you through it.
 
-**Adding a Director**
-1. Director **A** nominates the officer. Nothing changes for the officer yet.
-2. A **different** Director **B** confirms. The profile records both names.
+```mermaid
+flowchart LR
+    subgraph Add["Adding a Director"]
+      A1["Director A<br/>nominates"] --> A2["Director B<br/>(different) confirms"] --> A3["Officer becomes Director"]
+    end
+    subgraph Remove["Removing a Director"]
+      R1["Director A requests removal<br/>(or the Director asks to step down)"] --> R2["Director B<br/>(different) confirms"] --> R3["Disable, delete<br/>or change role"]
+    end
+```
 
-**Removing a Director** (disable, delete or change role)
-1. Director **A** requests removal. A Director may also request their own removal to step down.
-2. A **different** Director **B** confirms.
-
-**Bootstrap exception:** while there is only one Director, that Director may appoint *one* more Director alone. That appointment writes `meta/governance.twoPerson = true` in the same transaction, and the rule can never be switched off afterwards. In a workspace that already has two or more Directors, any Director can switch the rule on from Officer Access.
+**Bootstrap exception:** while there is only one Director, that Director may appoint *one* more Director alone. That appointment writes `meta/governance.twoPerson = true` in the same transaction, and the rule can never be switched off afterwards. A workspace that already has two or more Directors can switch it on from Officer Access.
 
 Safeguards also enforced by the rules:
 - A nomination or removal request is used once. It can't be reused after the profile's next Director decision, refreshed, or made in someone else's name.
 - Nobody can confirm their own nomination or removal request.
 - A Director can never remove their own Director access directly or delete their own profile.
+- No one can be added straight in as a Director by account ID.
 
 > With exactly two Directors, neither can remove the other unless that Director requests to step down. Keep at least three Directors if you need removals to work normally.
 
@@ -201,22 +210,42 @@ Applications move through **Scrutiny → EVC → Committee → Decision**. Each 
 
 ## Security
 
+### Controls
+
 | Control | Where |
 |---|---|
 | Who can read and change officer access | `firestore.rules`, enforced by Firestore |
 | Two-person rule for adding and removing Directors | `firestore.rules`, `meta/governance` |
-| Officers see only their own profile; Directors see all | `firestore.rules` |
-| Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` | `firebase.json` (every path) |
-| HTTPS only (HSTS) | Firebase Hosting default |
+| Officers see only their own profile; Directors see all; everything else is denied | `firestore.rules` |
+| No email allow-list or self-activation: Director access only through the two-person rule | `firestore.rules`, `lib/profiles.ts` |
+| Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` on every path | `firebase.json` |
+| HTTPS only (HSTS) | Firebase Hosting |
 | Minimum 8-character password on sign-up | `pages/Auth.tsx` |
 | Conflict of interest: affiliated officers can't review that institution's evidence or sit on its EVC panel | `store.tsx` |
 | "Sign out and clear this browser" for shared computers | Settings |
 | Dev server bound to `localhost` | `vite.config.ts` |
-| Dependency override for `@grpc/grpc-js` ≥ 1.13.6 | `pnpm-workspace.yaml` |
+| Patched dependency: `@grpc/grpc-js` ≥ 1.13.6 | `pnpm-workspace.yaml` |
+| Preview workflow never runs for pull requests from forks, so they can't reach secrets | `firebase-hosting-pull-request.yml` |
+
+### Latest security check
+
+| Check | Result |
+|---|---|
+| Secrets, keys or `.env` files in the repository or its history | None |
+| Personal emails, account IDs or phone numbers in the code or live site | None |
+| Unsafe code (`innerHTML`, `eval`, `javascript:` links) | None |
+| Known dependency vulnerabilities (`pnpm audit`) | None |
+| Database access without signing in (profiles, governance, other paths) | Refused (HTTP 403) |
+| Security headers on the live site | All present |
+| Security-rules tests (`pnpm test:rules`) | 26 / 26 pass |
+| Unit and page tests (`pnpm test`) | 42 / 42 pass |
 
 No credentials are stored in the repository. The `VITE_FIREBASE_*` values are the public web configuration; access is controlled by the rules, not by hiding them. **Never commit a service-account key.**
 
-Recommended project settings (Firebase and Google Cloud Console): App Check, email-enumeration protection, an API key restricted to your domain, authorized domains limited to the live site, and 2-Step Verification on every Director's Google account.
+**Recommended account settings:**
+- **Firebase and Google Cloud Console:** enable App Check, turn on email-enumeration protection, restrict the API key to your domain, and limit authorized domains to the live site.
+- **GitHub:** keep commit emails private (Settings → Emails).
+- **Every Director:** turn on 2-Step Verification for your Google account.
 
 ---
 
@@ -243,29 +272,39 @@ pnpm dev                        # http://localhost:8443
 
 ## Testing
 
-- **`pnpm test`** (Vitest): document comparison, normalisation, findings and rule linking, simulation isolation, evidence permissions, the audit chain, profile and access logic, the two-person decision steps, and page rendering.
-- **`pnpm test:rules`**: runs the real `firestore.rules` against a local emulator under the `demo-niyantran` project, which never touches production. It covers self-service limits, Director nomination, confirmation and removal, reuse of old requests, and the governance lock.
+- **`pnpm test`** (Vitest): document comparison, normalisation, findings and rule linking, simulation isolation, evidence permissions, the audit chain, profile and access logic, the two-person steps, and page rendering.
+- **`pnpm test:rules`**: runs the real `firestore.rules` in a local emulator under the `demo-niyantran` project, which never touches production. It covers self-service limits, Director nomination, confirmation and removal, reuse of old requests, the governance lock, and email and self-protection rules. The emulator may open a console window on Windows while it runs.
 
 GitHub Actions runs `typecheck` and `test` before every deploy.
 
 ---
 
-## Deployment
+## CI/CD and deployment
 
-**Website:** `.github/workflows/firebase-hosting-deploy.yml` installs, type-checks, tests, builds and deploys to the live channel on every push to `main`. It needs, in **GitHub → Settings → Secrets and variables → Actions**:
-- **Variables or secrets** (the workflow reads either): `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID`.
-- **Secret:** `FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0`. Create it with `firebase init hosting:github` (answer **No** to overwriting `firebase.json` or the workflow), or manually from a service account with the **Firebase Hosting Admin** role.
+```mermaid
+flowchart LR
+    Push["Push or merge to main"] --> Checks["Install → type-check<br/>→ tests → build"]
+    Checks --> Cred{"Deploy secret<br/>present?"}
+    Cred -->|yes| Live["Deploy to live site"]
+    Cred -->|no| Skip["Skip deploy<br/>(notice, run stays green)"]
+    PR["Pull request from<br/>this repository"] --> Preview["Preview channel deploy"]
+    Rules["Change to firestore.rules"] --> Manual["Run pnpm test:rules, then<br/>firebase deploy --only firestore:rules"]
+```
 
-If the build variables are missing, the site still builds but shows "Firebase is not configured" and nobody can sign in.
+**Website (automatic):** `firebase-hosting-deploy.yml` runs on every push to `main`. It needs, in **GitHub → Settings → Secrets and variables → Actions**:
+- **The Firebase web config,** as variables *or* secrets (the workflow reads either): `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID`. Without them the site builds but shows "Firebase is not configured".
+- **The deploy secret** `FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0`. Create it with `firebase init hosting:github` (answer **No** to overwriting `firebase.json` or the workflows). Without it, the run still checks and builds, then skips publishing.
 
-If the deploy secret is missing, the run still type-checks, tests and builds, then **skips publishing** with a "Deploy skipped" notice. Publish manually from your computer instead:
+**Pull-request previews:** `firebase-hosting-pull-request.yml` deploys a preview channel for pull requests opened from this repository, never from forks. It deploys the repository as checked out, *without a build step*, so add `pnpm install` and `pnpm build` (with the `VITE_FIREBASE_*` values) before the deploy step if you want working previews.
+
+**Manual deploy (fallback):**
 
 ```bash
 pnpm build
 firebase deploy --only hosting
 ```
 
-**Security rules are not deployed by CI.** After changing `firestore.rules`, run the rules tests and then:
+**Security rules are never deployed by CI.** After changing `firestore.rules`:
 
 ```bash
 pnpm test:rules
@@ -287,6 +326,7 @@ For a **new** Firebase project (the live project is already set up):
    2. In Firestore, create `profiles/{that account ID}` with string fields `name`, `email` (exactly the sign-in email), `region`, `role: "Director"` and `status: "active"`.
 
    From then on, every other officer and Director is approved inside the app.
+4. Add the GitHub variables and deploy secret described in [CI/CD and deployment](#cicd-and-deployment).
 
 ---
 
@@ -296,3 +336,4 @@ For a **new** Firebase project (the live project is already set up):
 - **Removing someone's profile doesn't delete their Firebase login.** It only removes their Niyantran access. Fully disabling the login needs a server (Cloud Functions).
 - **No OCR.** Scanned PDFs and images need manual transcription. Original files are kept in memory only for the session; the stored SHA-256 fingerprint ties each file to the record.
 - **Simulations cover document consistency only.** SLA, deposit, lease and undertaking checks are not simulated.
+- **Pull-request previews don't build the site** until a build step is added to that workflow.
