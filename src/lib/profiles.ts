@@ -6,7 +6,12 @@ import { ROLES, type Role } from "./types";
 // Officer access lives in Firestore `profiles/{uid}`. firestore.rules is the real enforcement:
 // a user may only file their own pending request; only an active Director can approve, assign roles or disable.
 
-export const PROFILE_STATUSES = ["pending", "active", "rejected", "disabled"] as const;
+// Accounts that may activate Director access themselves, without anyone approving them. This list must match
+// directorEmails() in firestore.rules: the rules are what actually enforce it, this copy only decides which screen to show.
+export const DIRECTOR_EMAILS = ["krishnnag998@gmail.com"];
+export const isDirectorEmail = (email: string | null | undefined) => !!email && DIRECTOR_EMAILS.includes(email.trim().toLowerCase());
+
+export const PROFILE_STATUSES =["pending", "active", "rejected", "disabled"] as const;
 export type ProfileStatus = (typeof PROFILE_STATUSES)[number];
 
 export type ProfileRecord = {
@@ -68,6 +73,16 @@ export async function requestAccess(db: Firestore, user: User, r: AccessRequest)
   const errors = validateRequest(r);
   if (errors.length) throw new Error(errors.join(" "));
   await setDoc(profileRef(db, user.uid), { ...clean(r), email: user.email ?? "", requestedRole: r.requestedRole, status: "pending", createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+}
+
+// For a listed Director account with a verified email. Replaces any pending request the account had filed.
+export async function claimDirector(db: Firestore, user: User, p: { name: string; region: string }) {
+  if (!isDirectorEmail(user.email)) throw new Error("This email is not on the Director list.");
+  if (!user.emailVerified) throw new Error("Verify your email address first.");
+  if (!p.name.trim() || p.name.trim().length > 120) throw new Error("Enter your full name.");
+  if (!p.region.trim() || p.region.trim().length > 60) throw new Error("Enter your region.");
+  await setDoc(profileRef(db, user.uid), { name: p.name.trim(), email: user.email ?? "", region: p.region.trim(), role: "Director", requestedRole: "Director", status: "active",
+    jobTitle: "Director", phone: "", institutionAffiliation: "", createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
 }
 
 export function watchProfiles(db: Firestore, next: (rows: ProfileRecord[]) => void, fail: (reason: { code?: string; message?: string }) => void) {

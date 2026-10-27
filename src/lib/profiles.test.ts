@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessProblem, parseProfile, toAuthProfile, validateRequest } from "./profiles";
+import { accessProblem, isDirectorEmail, parseProfile, toAuthProfile, validateRequest } from "./profiles";
 
 // Synthetic accounts only.
 const active = { name: "Demo Officer", email: "Demo.Officer@example.org", role: "Scrutiny Officer", region: "North", status: "active" };
@@ -22,6 +22,12 @@ describe("officer profiles", () => {
     const rec = parseProfile("u", { ...active, role: "Admin" });
     expect(rec.role).toBeNull();
     expect(accessProblem(rec, active.email)).toMatch(/No officer role/);
+  });
+
+  it("recognises only listed Director emails, ignoring case and spaces", () => {
+    expect(isDirectorEmail(" KrishnNag998@Gmail.com ")).toBe(true);
+    expect(isDirectorEmail("someone.else@example.org")).toBe(false);
+    expect(isDirectorEmail(null)).toBe(false);
   });
 
   it("reads Firestore timestamps", () => {

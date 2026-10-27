@@ -39,11 +39,26 @@ service cloud.firestore {
         && (request.auth.uid != userId || (d.status == 'active' && d.role == 'Director'));
     }
 
+    // Accounts allowed to activate Director access on their own. Keep in step with DIRECTOR_EMAILS in src/lib/profiles.ts.
+    function directorEmails() { return ['krishnnag998@gmail.com']; }
+
+    // A listed account with a verified email activating its own Director profile.
+    function claimDirector(userId) {
+      let d = request.resource.data;
+      return signedIn() && request.auth.uid == userId
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in directorEmails()
+        && d.email == request.auth.token.email
+        && d.keys().hasOnly(['name', 'email', 'phone', 'jobTitle', 'region', 'institutionAffiliation', 'requestedRole', 'role', 'status', 'createdAt', 'updatedAt'])
+        && d.status == 'active' && d.role == 'Director' && commonFields(d)
+        && d.updatedAt == request.time;
+    }
+
     match /profiles/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || isDirector());
-      allow create: if ownRequest(userId) || directorWrite(userId);
+      allow create: if ownRequest(userId) || directorWrite(userId) || claimDirector(userId);
       // Applicants may revise a pending or rejected request; active and disabled profiles change only through a Director.
-      allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId);
+      allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId) || claimDirector(userId);
       allow delete: if false;
     }
 
