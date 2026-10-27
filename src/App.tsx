@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  Activity, Bell, BookOpen, Building2, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileSearch, FileText, Gavel, History, Landmark,
+  Activity, Bell, BookOpen, Building2, Crown, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileSearch, FileText, Gavel, History, Landmark,
   LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, ShieldCheck, UserCheck, Users, X,
 } from "lucide-react";
 import { ThemeToggleButton } from "@/components/ui/skiper-ui/skiper26";
@@ -9,6 +9,9 @@ import { versionInForce } from "@/lib/engine";
 import { NavContext, type Params } from "@/lib/nav";
 import { useStore } from "@/lib/store";
 import AccessPage from "@/pages/Access";
+import DirectorDesk from "@/pages/DirectorDesk";
+import { useOfficerProfiles } from "@/lib/useOfficerProfiles";
+import { isActiveDirector, liveNomination } from "@/lib/profiles";
 import { isMine } from "@/pages/Alerts";
 import AlertsPage from "@/pages/Alerts";
 import ApplicationsPage from "@/pages/Applications";
@@ -43,6 +46,9 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     { label: "Alerts & Escalations", page: "Alerts & Escalations", icon: Bell },
     { label: "Institutions", page: "Institutions", icon: Building2 },
     { label: "Audit Trail", page: "Audit Trail", icon: History },
+  ] },
+  { group: "Director", items: [
+    { label: "Director Desk", page: "Director Desk", icon: Crown, directorOnly: true },
     { label: "Officer Access", page: "Officer Access", icon: UserCheck, directorOnly: true },
   ] },
 ];
@@ -50,7 +56,7 @@ const NAV: { group: string; items: NavEntry[] }[] = [
 const PAGES: Record<string, () => React.ReactElement> = {
   "Dashboard": Dashboard, "Aaj Ka Kaam": TasksPage, "Applications": ApplicationsPage, "Compliance Monitor": CompliancePage,
   "EVC Management": EvcPage, "Evidence Intelligence": EvidencePage, "Rulebook (APH)": RulebookPage, "Alerts & Escalations": AlertsPage, "Audit Trail": AuditPage,
-  "Institutions": InstitutionsPage, "Settings": SettingsPage, "Officer Access": AccessPage,
+  "Institutions": InstitutionsPage, "Settings": SettingsPage, "Officer Access": AccessPage, "Director Desk": DirectorDesk,
 };
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join("");
@@ -73,11 +79,15 @@ function Colonnade() {
 
 function Sidebar({ page, params, go, open, close, collapsed, toggle, onSignOut }: { page: string; params: Params; go: (p: string, ps?: Params) => void; open: boolean; close: () => void; collapsed: boolean; toggle: () => void; onSignOut: () => void }) {
   const { state, alerts, me, identity } = useStore();
+  const director = identity?.role === "Director";
+  const { rows: profiles } = useOfficerProfiles(director);
+  // Requests to decide, plus Director nominations made by someone else that are waiting for this Director to confirm.
+  const pendingAccess = profiles?.filter(r => r.status === "pending" || (liveNomination(r) && !isActiveDirector(r) && r.nominatedBy !== identity?.uid)).length ?? 0;
   const myTasks = state.tasks.filter(t => t.status === "open" && t.owner === me?.id).length;
   const openAlerts = alerts.filter(a => !state.alerts[a.id]?.resolvedAt).length;
   const count = (e: NavEntry) => e.stage ? state.applications.filter(a => a.stage === e.stage).length
-    : e.page === "Aaj Ka Kaam" ? myTasks : e.page === "Alerts & Escalations" ? openAlerts : 0;
-  const visible = (e: NavEntry) => !e.directorOnly || identity?.role === "Director";
+    : e.page === "Aaj Ka Kaam" ? myTasks : e.page === "Alerts & Escalations" ? openAlerts : e.page === "Officer Access" ? pendingAccess : 0;
+  const visible = (e: NavEntry) => !e.directorOnly || director;
   return <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Main navigation">
     <div className="identity">
       <img className="aicte-logo" src="/brand/aicte-logo.png" alt="AICTE logo" />
@@ -88,12 +98,12 @@ function Sidebar({ page, params, go, open, close, collapsed, toggle, onSignOut }
       <div className="brandmark"><Landmark size={17}/></div>
       <div className="brand-text"><strong>Niyantran</strong><span>Regulatory Command Desk</span></div>
     </div>
-    <nav>{NAV.map(g => <div key={g.group} className="nav-group">
+    <nav>{NAV.filter(g => g.items.some(visible)).map(g => <div key={g.group} className="nav-group">
       <div className="nav-label">{g.group}</div>
       {g.items.filter(visible).map(e => { const Icon = e.icon; const n = count(e); const active = isActive(e, page, params);
         return <button key={e.label} className={`nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} title={collapsed ? e.label : undefined}
           onClick={() => { go(e.page, e.stage ? { stage: e.stage } : {}); close(); }}>
-          <Icon size={17}/><span>{e.label}</span>{n > 0 && <i aria-label={`${n} open`}>{n}</i>}
+          <Icon size={17}/><span>{e.label}</span>{n > 0 && <i className={e.page === "Officer Access" ? "attention" : undefined} aria-label={e.page === "Officer Access" ? `${n} access requests waiting` : `${n} open`}>{n}</i>}
         </button>; })}
     </div>)}</nav>
     <Colonnade/>
@@ -165,7 +175,7 @@ const readCollapsed = () => { try { return localStorage.getItem("niyantran-sideb
 
 export default function App({ onSignOut = () => {} }: { onSignOut?: () => void }) {
   const { state, now, me, identity, run } = useStore();
-  const [page, setPage] = useState("Dashboard");
+  const [page, setPage] = useState(() => identity?.role === "Director" ? "Director Desk" : "Dashboard");
   const [params, setParams] = useState<Params>({});
   const [mobile, setMobile] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsed);

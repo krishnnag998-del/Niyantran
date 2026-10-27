@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "format": "oxfmt",
     "test": "vitest run",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-niyantran \"vitest run --config vitest.rules.config.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
