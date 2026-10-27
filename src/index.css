@@ -956,8 +956,6 @@ input.narrow { flex: 0 0 72px !important; min-width: 0 !important; }
   .ev-finding-body, .ev-explain { grid-template-columns: 1fr; }
 }
 .demo-box { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-2); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-<<<<<<< HEAD
-=======
 
 /* Firebase sign-in */
 .auth-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, .82fr); background: var(--surface); color: var(--text); }
@@ -1026,4 +1024,3 @@ input.narrow { flex: 0 0 72px !important; min-width: 0 !important; }
 .access-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 4px 16px; }
 .auth-icon.director { color: var(--gold-ink); background: color-mix(in srgb, var(--gold) 16%, transparent); }
 .auth-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483

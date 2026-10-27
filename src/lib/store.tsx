@@ -4,10 +4,7 @@ import {
   addDays, deriveAlerts, escalationChain, institutionOf, iso, localDate, officerName, pickOfficer, rulesById, stageOwnerFor, uid, versionInForce, type Alert,
 } from "./engine";
 import { currentDocs, evaluateEvidence, evidenceBlockers, extractFields, fieldDef } from "./evidence";
-<<<<<<< HEAD
-=======
 import type { AuthProfile } from "./auth-profile";
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 import {
   AUTHORIZED_ROLES, EVIDENCE_DOC_TYPES, STAGES, emptyState, type Application, type AuditEvent, type AuditMeta, type EvidenceDocType, type EvidenceDocument,
   type FindingReview, type Institution, type Officer, type ReviewOutcome, type RuleVersion, type SimulationSession, type Stage, type State, type Task, type Undertaking, type Visit,
@@ -832,13 +829,9 @@ export function applyAll(s: State, steps: { action: Action; actor: string }[], n
   return steps.reduce((acc, step, i) => dispatch(acc, step.action, step.actor, now + i), s);
 }
 
-<<<<<<< HEAD
-function load(): State {
-=======
 function load(scope?: string, identity?: AuthProfile): State {
   const storageKey = scope ? `${STORAGE_KEY}:${scope}` : STORAGE_KEY;
   let state = emptyState();
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
   try {
     const raw = localStorage.getItem(storageKey);
     const parsed = raw ? JSON.parse(raw) : null;
@@ -872,14 +865,9 @@ type Store = {
 const StoreContext = createContext<Store | null>(null);
 
 // `initial` bypasses browser storage; used by render tests.
-<<<<<<< HEAD
-export function StoreProvider({ children, initial }: { children: ReactNode; initial?: State }) {
-  const [state, setState] = useState<State>(() => initial ?? load());
-=======
 export function StoreProvider({ children, initial, scope, identity = null }: { children: ReactNode; initial?: State; scope?: string; identity?: AuthProfile | null }) {
   const storageKey = scope ? `${STORAGE_KEY}:${scope}` : STORAGE_KEY;
   const [state, setState] = useState<State>(() => initial ?? load(scope, identity ?? undefined));
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
   const [now, setNow] = useState(() => Date.now());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const stateRef = useRef(state);
@@ -951,11 +939,7 @@ export function StoreProvider({ children, initial, scope, identity = null }: { c
     }
   }, [alerts, state, me]);
 
-<<<<<<< HEAD
-  const value = useMemo(() => ({ state, now, alerts, me, run, runScript, toast, toasts }), [state, now, alerts, me, run, runScript, toast, toasts]);
-=======
   const value = useMemo(() => ({ state, now, alerts, me, identity, run, runScript, toast, toasts }), [state, now, alerts, me, identity, run, runScript, toast, toasts]);
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

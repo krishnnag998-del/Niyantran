@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Activity, Bell, BookOpen, Building2, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileSearch, FileText, Gavel, History, Landmark,
-<<<<<<< HEAD
-  LayoutDashboard, ListChecks, Menu, Search, Settings, ShieldCheck, Users, X,
-=======
   LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, ShieldCheck, UserCheck, Users, X,
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 } from "lucide-react";
 import { ThemeToggleButton } from "@/components/ui/skiper-ui/skiper26";
 import { Badge, Toasts, severityTone } from "@/components/kit";
@@ -54,11 +50,7 @@ const NAV: { group: string; items: NavEntry[] }[] = [
 const PAGES: Record<string, () => React.ReactElement> = {
   "Dashboard": Dashboard, "Aaj Ka Kaam": TasksPage, "Applications": ApplicationsPage, "Compliance Monitor": CompliancePage,
   "EVC Management": EvcPage, "Evidence Intelligence": EvidencePage, "Rulebook (APH)": RulebookPage, "Alerts & Escalations": AlertsPage, "Audit Trail": AuditPage,
-<<<<<<< HEAD
-  "Institutions": InstitutionsPage, "Settings": SettingsPage,
-=======
   "Institutions": InstitutionsPage, "Settings": SettingsPage, "Officer Access": AccessPage,
->>>>>>> fbef2ec78d35b12985047eddeb6881c7c25b1483
 };
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join("");
