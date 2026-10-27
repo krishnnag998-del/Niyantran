@@ -51,6 +51,22 @@ service cloud.firestore {
         ));
     }
 
+    // ---- Two-person rule for removing a Director (disable, delete or demote) ----
+    function losesDirector(d) { return wasDirector() && !(d.status == 'active' && d.role == 'Director'); }
+    // A removal request counts only if made after the profile's last Director approval.
+    function freshRemovalRequest() {
+      return prev('removalRequestedBy') != null && prev('removalRequestedAt') != null
+        && (prev('directorApprovedAt') == null || prev('removalRequestedAt') > prev('directorApprovedAt'));
+    }
+    function removalConfirmedByOther() { return freshRemovalRequest() && prev('removalRequestedBy') != request.auth.uid; }
+    // The removal request is left as it was, cleared, or freshly made by the acting Director.
+    function removalRequestOk(d) {
+      return d.get('removalRequestedBy', null) == null
+        || (d.get('removalRequestedBy', null) == prev('removalRequestedBy') && d.get('removalRequestedAt', null) == prev('removalRequestedAt'))
+        || (d.get('removalRequestedBy', null) == request.auth.uid && d.get('removalRequestedAt', null) == request.time && wasDirector());
+    }
+    function removalOk(d) { return !losesDirector(d) || removalConfirmedByOther(); }
+
     // A user filing their own access request: always pending, their own email, and no role.
     function ownRequest(userId) {
       let d = request.resource.data;
@@ -67,7 +83,8 @@ service cloud.firestore {
       return isDirector()
         && d.keys().hasOnly(['name', 'email', 'phone', 'jobTitle', 'region', 'institutionAffiliation', 'requestedRole', 'role', 'status',
                              'createdAt', 'updatedAt', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'reviewNote',
-                             'nominatedBy', 'nominatedByName', 'nominatedAt', 'directorApprovedBy', 'directorApprovedByName', 'directorApprovedAt'])
+                             'nominatedBy', 'nominatedByName', 'nominatedAt', 'directorApprovedBy', 'directorApprovedByName', 'directorApprovedAt',
+                             'removalRequestedBy', 'removalRequestedByName', 'removalRequestedAt'])
         && d.status in ['pending', 'active', 'rejected', 'disabled'] && commonFields(d)
         && (d.status != 'active' || d.role in roles())
         && d.reviewedBy == request.auth.uid && d.reviewedAt == request.time
@@ -75,7 +92,9 @@ service cloud.firestore {
         && (resource == null || d.email == resource.data.email)
         && (request.auth.uid != userId || (d.status == 'active' && d.role == 'Director'))
         && nominationOk(d, userId)
-        && promotionOk(d);
+        && promotionOk(d)
+        && removalRequestOk(d)
+        && removalOk(d);
     }
 
     match /profiles/{userId} {
@@ -84,7 +103,8 @@ service cloud.firestore {
       // Applicants may revise a pending or rejected request; active and disabled profiles change only through a Director.
       allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId);
       // Removes Niyantran access only; the Firebase login itself is untouched.
-      allow delete: if isDirector() && request.auth.uid != userId;
+      // Deleting a Director also needs a removal request from a different Director.
+      allow delete: if isDirector() && request.auth.uid != userId && (!wasDirector() || removalConfirmedByOther());
     }
 
     match /meta/governance {

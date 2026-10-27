@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
-import { Download, Plus, Upload, Users } from "lucide-react";
+import { Download, LogOut, Plus, Upload, Users } from "lucide-react";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Badge, Button, CardHead, Empty, Field, Modal, PageHeading } from "@/components/kit";
 import { RegionOptions } from "@/pages/Institutions";
 import { openTaskCount } from "@/lib/engine";
@@ -38,7 +40,10 @@ export default function SettingsPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState("");
   const [resetOpen, setResetOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  // Wipes this browser's copy of the workspace, then signs out. The store saves the emptied state, so nothing readable is left behind.
+  const signOutAndClear = () => { if (run({ type: "RESET" })) window.setTimeout(() => { if (auth) void signOut(auth); }, 100); };
   const missingRoles = STAGES.filter(s => !state.officers.some(o => o.active && o.role === STAGE_ROLE[s])).map(s => STAGE_ROLE[s]);
 
   const exportData = () => {
@@ -91,12 +96,17 @@ export default function SettingsPage() {
           <div className="pad stack">
             <p className="muted">{state.applications.length} applications · {state.audit.length} audit events · chain {verifyChain(state.audit).ok ? "intact" : "broken"}</p>
             <div className="button-row"><Button kind="secondary" onClick={exportData}><Download size={15}/>Export backup</Button><Button kind="secondary" onClick={() => file.current?.click()}><Upload size={15}/>Import backup</Button><Button kind="danger" onClick={() => setResetOpen(true)}>Reset all data</Button></div>
+            {identity && <><p className="muted">On a shared or public computer, remove your data from this browser when you finish. Signing out normally keeps it here for next time.</p>
+              <div className="button-row"><Button kind="danger" onClick={() => setClearOpen(true)}><LogOut size={15}/>Sign out and clear this browser</Button></div></>}
             <input ref={file} type="file" accept="application/json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) importData(f); e.target.value = ""; }}/>
           </div>
         </article>
       </div>
     </div>
     {editing !== null && <OfficerModal id={editing || undefined} onClose={() => setEditing(null)}/>}
+    {clearOpen && <Modal title="Sign out and clear this browser?" onClose={() => setClearOpen(false)} footer={<><Button kind="secondary" onClick={() => setClearOpen(false)}>Cancel</Button><Button kind="secondary" onClick={exportData}><Download size={15}/>Export backup first</Button><Button kind="danger" onClick={signOutAndClear}>Clear and sign out</Button></>}>
+      <p>This removes your applications, evidence fields and audit trail from this browser, then signs you out. They are stored only here, so export a backup first if you need them. Your officer profile and access stay as they are.</p>
+    </Modal>}
     {resetOpen && <Modal title="Reset all data?" onClose={() => setResetOpen(false)} footer={<><Button kind="secondary" onClick={() => setResetOpen(false)}>Cancel</Button><Button kind="danger" disabled={confirmReset !== "RESET"} onClick={() => run({ type: "RESET" }) && setResetOpen(false)}>Delete everything</Button></>}>
       <p>This permanently deletes all officers, institutions, rules, applications, visits, tasks, alerts and the audit trail from this browser. Export a backup first if you may need it.</p>
       <Field label="Type RESET to confirm"><input value={confirmReset} onChange={e => setConfirmReset(e.target.value)}/></Field>

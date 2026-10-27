@@ -17,6 +17,7 @@ export type ProfileRecord = {
   reviewedBy: string | null; reviewedByName: string | null; reviewedAt: string | null; reviewNote: string;
   nominatedBy: string | null; nominatedByName: string | null; nominatedAt: string | null;
   directorApprovedBy: string | null; directorApprovedByName: string | null; directorApprovedAt: string | null;
+  removalRequestedBy: string | null; removalRequestedByName: string | null; removalRequestedAt: string | null;
 };
 
 export type AccessRequest = { name: string; requestedRole: Role; region: string; jobTitle: string; phone: string; institutionAffiliation: string };
@@ -37,6 +38,7 @@ export function parseProfile(uid: string, value: Record<string, unknown>): Profi
     reviewedBy: str(value.reviewedBy) || null, reviewedByName: str(value.reviewedByName) || null, reviewedAt: time(value.reviewedAt), reviewNote: str(value.reviewNote),
     nominatedBy: str(value.nominatedBy) || null, nominatedByName: str(value.nominatedByName) || null, nominatedAt: time(value.nominatedAt),
     directorApprovedBy: str(value.directorApprovedBy) || null, directorApprovedByName: str(value.directorApprovedByName) || null, directorApprovedAt: time(value.directorApprovedAt),
+    removalRequestedBy: str(value.removalRequestedBy) || null, removalRequestedByName: str(value.removalRequestedByName) || null, removalRequestedAt: time(value.removalRequestedAt),
   };
 }
 
@@ -44,6 +46,17 @@ export const isActiveDirector = (r: ProfileRecord) => r.status === "active" && r
 
 // A nomination is live only if it came after the profile's last Director approval (mirrors freshNomination() in the rules).
 export const liveNomination = (r: ProfileRecord) => !!r.nominatedBy && !!r.nominatedAt && (!r.directorApprovedAt || r.nominatedAt > r.directorApprovedAt);
+
+// A removal request is live only if made after the Director's last approval (mirrors freshRemovalRequest() in the rules).
+export const liveRemoval = (r: ProfileRecord) => !!r.removalRequestedBy && !!r.removalRequestedAt && (!r.directorApprovedAt || r.removalRequestedAt > r.directorApprovedAt);
+
+// What the signed-in Director can do towards removing Director `r` (disable, delete or demote). Mirrors removalOk() in the rules.
+export type RemovalStep = "not-director" | "request" | "awaiting-other" | "confirm";
+export function removalStep(r: ProfileRecord, meUid: string): RemovalStep {
+  if (!isActiveDirector(r)) return "not-director";
+  if (!liveRemoval(r)) return "request";
+  return r.removalRequestedBy === meUid ? "awaiting-other" : "confirm";
+}
 
 // What the signed-in Director can do towards making `r` a Director. Mirrors promotionOk() in firestore.rules.
 export type DirectorStep = "already" | "self" | "solo" | "nominate" | "awaiting-other" | "confirm";
@@ -99,10 +112,16 @@ const reviewStamp = (by: Reviewer) => ({ reviewedBy: by.uid, reviewedByName: by.
 
 const DIRECTOR_STEPS_ONLY = "Director access needs the two-person approval steps. Use Nominate as Director instead.";
 const makesDirector = (rec: ProfileRecord, status: ProfileStatus, role: Role | null) => status === "active" && role === "Director" && !isActiveDirector(rec);
+const removesDirector = (rec: ProfileRecord, status: ProfileStatus, role: Role | null) => isActiveDirector(rec) && !(status === "active" && role === "Director");
+// Removing a Director needs a live removal request from a different Director.
+function requireRemovalConfirmation(rec: ProfileRecord, by: Reviewer) {
+  if (removalStep(rec, by.uid) !== "confirm") throw new Error("Removing a Director needs a removal request from one Director and confirmation by a different Director.");
+}
 
 export async function reviewProfile(db: Firestore, rec: ProfileRecord, change: { status: ProfileStatus; role?: Role | null; region?: string; note?: string }, by: Reviewer) {
   if (change.status === "active" && !(change.role ?? rec.role)) throw new Error("Choose a role before activating.");
   if (makesDirector(rec, change.status, change.role ?? rec.role)) throw new Error(DIRECTOR_STEPS_ONLY);
+  if (rec.uid !== by.uid && removesDirector(rec, change.status, change.role ?? rec.role)) requireRemovalConfirmation(rec, by);
   if ((change.status === "rejected" || change.status === "disabled") && !change.note?.trim()) throw new Error("Give a reason.");
   if (rec.uid === by.uid && (change.status !== "active" || (change.role ?? rec.role) !== "Director")) throw new Error("You cannot remove your own Director access.");
   const region = (change.region ?? rec.region).trim();
@@ -130,6 +149,7 @@ export async function editProfile(db: Firestore, rec: ProfileRecord, p: ProfileE
   if (rec.uid === by.uid && p.role !== "Director") throw new Error("You cannot remove your own Director role.");
   if (rec.status === "active" && !p.role) throw new Error("An active officer needs a role.");
   if (makesDirector(rec, rec.status, p.role)) throw new Error(DIRECTOR_STEPS_ONLY);
+  if (rec.uid !== by.uid && removesDirector(rec, rec.status, p.role)) requireRemovalConfirmation(rec, by);
   await updateDoc(profileRef(db, rec.uid), { name: p.name.trim(), jobTitle: p.jobTitle.trim(), region: p.region.trim(), institutionAffiliation: p.institutionAffiliation.trim(),
     phone: p.phone.trim(), role: p.role, reviewNote: rec.reviewNote, ...reviewStamp(by) });
 }
@@ -137,7 +157,21 @@ export async function editProfile(db: Firestore, rec: ProfileRecord, p: ProfileE
 // Removes the officer's Niyantran profile, so they lose access. Their Firebase login itself is not deleted.
 export async function deleteProfile(db: Firestore, rec: ProfileRecord, by: Reviewer) {
   if (rec.uid === by.uid) throw new Error("You cannot delete your own profile.");
+  if (isActiveDirector(rec)) requireRemovalConfirmation(rec, by);
   await deleteDoc(profileRef(db, rec.uid));
+}
+
+// ---- Two-person rule for removing a Director (enforced by firestore.rules) ----
+
+// Step 1: one Director asks for another Director to be removed. Nothing changes until a different Director confirms.
+// A Director may also request their own removal (to step down); another Director then confirms.
+export async function requestDirectorRemoval(db: Firestore, rec: ProfileRecord, by: Reviewer) {
+  if (!isActiveDirector(rec)) throw new Error(`${rec.name} is not a Director.`);
+  await updateDoc(profileRef(db, rec.uid), { removalRequestedBy: by.uid, removalRequestedByName: by.name, removalRequestedAt: serverTimestamp(), reviewNote: rec.reviewNote, ...reviewStamp(by) });
+}
+
+export async function withdrawRemovalRequest(db: Firestore, rec: ProfileRecord, by: Reviewer) {
+  await updateDoc(profileRef(db, rec.uid), { removalRequestedBy: deleteField(), removalRequestedByName: deleteField(), removalRequestedAt: deleteField(), reviewNote: rec.reviewNote, ...reviewStamp(by) });
 }
 
 // ---- Two-person rule for new Directors (enforced by firestore.rules) ----

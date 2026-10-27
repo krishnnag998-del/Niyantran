@@ -5,7 +5,7 @@ import { fmtDateTime } from "@/lib/engine";
 import { auth, db } from "@/lib/firebase";
 import {
   appointFirstAdditionalDirector, confirmDirector, createProfile, deleteProfile, directorStep, editProfile, enableTwoPersonRule, isActiveDirector, liveNomination, nominateDirector,
-  reviewProfile, sendReset, withdrawNomination, type ProfileEdit, type ProfileRecord, type ProfileStatus,
+  removalStep, requestDirectorRemoval, reviewProfile, sendReset, withdrawNomination, withdrawRemovalRequest, type ProfileEdit, type ProfileRecord, type ProfileStatus, type RemovalStep,
 } from "@/lib/profiles";
 import { useNav } from "@/lib/nav";
 import { useStore } from "@/lib/store";
@@ -105,6 +105,9 @@ function ProfileCard({ rec, self, twoPerson }: { rec: ProfileRecord; self: boole
   };
   const changed = role !== rec.role || region.trim() !== rec.region;
   const promoting = role === "Director" && !isActiveDirector(rec);
+  // Disabling, deleting or demoting a Director is locked until a different Director confirms a removal request.
+  const removal = removalStep(rec, identity!.uid);
+  const unlocked = removal === "not-director" || removal === "confirm";
 
   return <article className="card">
     <CardHead title={rec.name || "(no name)"} sub={`${rec.email} · account ${rec.uid}`}><Badge tone={STATUS_TONE[rec.status]}>{rec.status}</Badge></CardHead>
@@ -119,23 +122,24 @@ function ProfileCard({ rec, self, twoPerson }: { rec: ProfileRecord; self: boole
         <div className="kv"><span>Last change</span><strong>{rec.reviewedAt ? `${fmtDateTime(rec.reviewedAt)} · ${rec.reviewedByName ?? rec.reviewedBy}` : "Not reviewed"}</strong></div>
       </div>
       {rec.reviewNote && <div className="quote"><span>Review note</span>{rec.reviewNote}</div>}
-      {self && <p className="muted">This is your own profile. You can edit your details, but not remove your own Director role or delete yourself.</p>}
+      {self && <p className="muted">This is your own profile. You can edit your details. To step down as Director, request your own removal; a different Director must confirm it.</p>}
       <div className="form-grid">
-        <Field label="Officer role"><select value={role} onChange={e => setRole(e.target.value as Role)} disabled={busy || self}>{ROLES.map(r => <option key={r}>{r}</option>)}</select></Field>
+        <Field label="Officer role" hint={!self && !unlocked ? "Locked: changing a Director's role needs a confirmed removal request." : undefined}><select value={role} onChange={e => setRole(e.target.value as Role)} disabled={busy || self || !unlocked}>{ROLES.map(r => <option key={r}>{r}</option>)}</select></Field>
         <Field label="Region"><input value={region} onChange={e => setRegion(e.target.value)} disabled={busy}/></Field>
-        {!self && rec.status !== "disabled" && rec.status !== "rejected" && <Field label={rec.status === "pending" ? "Reason (required to reject)" : "Reason (required to disable)"} wide><input value={note} onChange={e => setNote(e.target.value)} disabled={busy}/></Field>}
+        {!self && unlocked && rec.status !== "disabled" && rec.status !== "rejected" && <Field label={rec.status === "pending" ? "Reason (required to reject)" : "Reason (required to disable)"} wide><input value={note} onChange={e => setNote(e.target.value)} disabled={busy}/></Field>}
       </div>
       {promoting && <DirectorPanel rec={rec} region={region} twoPerson={twoPerson} onCancel={() => setRole(rec.role ?? (rec.requestedRole !== "Director" ? rec.requestedRole : null) ?? "Scrutiny Officer")}/>}
+      {removal !== "not-director" && <RemovalPanel rec={rec} step={removal} self={self}/>}
       <div className="access-actions">
         <div className="row-actions">
           <Button small kind="ghost" onClick={() => setEditing(true)} disabled={busy}><Pencil size={14}/>Edit details</Button>
           <Button small kind="ghost" onClick={reset} disabled={busy}><KeyRound size={14}/>Reset password</Button>
-          {!self && <Button small kind="ghost" onClick={() => setDeleting(true)} disabled={busy}><Trash2 size={14}/>Delete</Button>}
+          {!self && unlocked && <Button small kind="ghost" onClick={() => setDeleting(true)} disabled={busy}><Trash2 size={14}/>Delete</Button>}
         </div>
         <div className="row-actions">
           {rec.status === "pending" && <><Button kind="danger" disabled={busy || !note.trim()} onClick={() => act("rejected", `Request from ${rec.name} rejected`)}>Reject</Button>
             {!promoting && <Button disabled={busy || !region.trim()} onClick={() => act("active", `${rec.name} approved as ${role}`)}>Approve as {role}</Button>}</>}
-          {rec.status === "active" && <>{!self && <Button kind="danger" disabled={busy || !note.trim()} onClick={() => act("disabled", `${rec.name} disabled`)}>Disable access</Button>}
+          {rec.status === "active" && <>{!self && unlocked && <Button kind="danger" disabled={busy || !note.trim()} onClick={() => act("disabled", `${rec.name} disabled`)}>Disable access</Button>}
             {!promoting && <Button disabled={busy || !changed || !region.trim()} onClick={() => act("active", `${rec.name} updated`)}>Save role & region</Button>}</>}
           {(rec.status === "rejected" || rec.status === "disabled") && !promoting && <Button disabled={busy || !region.trim()} onClick={() => act("active", `${rec.name} activated as ${role}`)}>Activate as {role}</Button>}
         </div>
@@ -144,6 +148,37 @@ function ProfileCard({ rec, self, twoPerson }: { rec: ProfileRecord; self: boole
     {editing && <EditProfile rec={rec} self={self} onClose={() => setEditing(false)}/>}
     {deleting && <DeleteProfile rec={rec} onClose={() => setDeleting(false)}/>}
   </article>;
+}
+
+// The two-person rule for removing a Director: one Director requests, a different Director confirms.
+function RemovalPanel({ rec, step, self }: { rec: ProfileRecord; step: RemovalStep; self: boolean }) {
+  const { identity, toast } = useStore();
+  const [busy, setBusy] = useState(false);
+  const me = { uid: identity!.uid, name: identity!.name };
+  const run = async (op: () => Promise<unknown>, done: string) => {
+    if (!db) return;
+    setBusy(true);
+    try { await op(); toast(done); }
+    catch (reason) { toast(failure(reason, "The change was refused."), "error"); }
+    finally { setBusy(false); }
+  };
+  const who = self ? "you" : rec.name || "this Director";
+  const when = rec.removalRequestedAt ? fmtDateTime(rec.removalRequestedAt) : "";
+  return <div className="director-panel">
+    <div className="director-panel-head"><ShieldX size={16}/><strong>Removing a Director needs two Directors</strong></div>
+    {step === "request" && <>
+      <p>{self ? "To step down, request your own removal. A different Director must confirm it." : `To disable, delete or change the role of ${who}, first request removal. A different Director must then confirm it.`}</p>
+      <div className="row-actions"><Button small kind="secondary" disabled={busy} onClick={() => run(() => requestDirectorRemoval(db!, rec, me), "Removal requested. Another Director must confirm.")}>{self ? "Request to step down" : "Request removal"}</Button></div>
+    </>}
+    {step === "awaiting-other" && <>
+      <p>You requested the removal of {who} on {when}. Waiting for a different Director to confirm.</p>
+      <div className="row-actions"><Button small kind="secondary" disabled={busy} onClick={() => run(() => withdrawRemovalRequest(db!, rec, me), "Removal request withdrawn")}>Withdraw request</Button></div>
+    </>}
+    {step === "confirm" && <>
+      <p><strong>{rec.removalRequestedByName ?? "Another Director"}</strong> requested the removal of {who} on {when}. To confirm, use <strong>Disable access</strong>, <strong>Delete</strong> or change the role below. To refuse, decline the request.</p>
+      <div className="row-actions"><Button small kind="secondary" disabled={busy} onClick={() => run(() => withdrawRemovalRequest(db!, rec, me), "Removal request declined")}>Decline request</Button></div>
+    </>}
+  </div>;
 }
 
 // The two-person rule for Director access: nominate, then a different Director confirms.
