@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, CircleAlert, FileText, GitBranch, Search, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleAlert, FileSearch, FileText, GitBranch, Search, ShieldCheck } from "lucide-react";
 import { DocumentList, UndertakingList } from "@/components/caseParts";
 import { AlertExplain, Badge, Button, CardHead, Countdown, Empty, Field, Modal, OfficerSelect, PageHeading, SlaChip, SlaClock, Tabs, Who, severityTone } from "@/components/kit";
+import { evaluateEvidence, evidenceBlockers } from "@/lib/evidence";
 import { addDays, draftDecision, fmtDate, fmtDateTime, fmtDays, institutionOf, localDate, officerName, rulesById, slaInfo, stageOwnerFor, stageTimes, versionInForce, versionLabel } from "@/lib/engine";
 import { useNav } from "@/lib/nav";
 import { advanceBlockers, useStore } from "@/lib/store";
@@ -126,6 +127,7 @@ function ApplicationDetail({ id }: { id: string }) {
           <StageTimes app={app} rules={rules}/>
         </article>
         <RulesCard app={app}/>
+        <EvidenceCard app={app}/>
         <article className="card"><CardHead title="Alerts" sub={`${appAlerts.length} active for this application`} action={appAlerts.length ? "All alerts" : undefined} onAction={() => go("Alerts & Escalations")}/>
           {appAlerts.length === 0 ? <p className="muted pad">No active alerts.</p> : <div className="pad stack">{appAlerts.map(a => <div key={a.id} className="drawer-alert"><strong><Badge tone={severityTone(a.severity)}>{a.severity}</Badge> {a.title}</strong><AlertExplain alert={a}/></div>)}</div>}
         </article>
@@ -232,6 +234,21 @@ function DecisionCard({ app }: { app: Application }) {
           <Button onClick={() => run({ type: "APP_SIGN", appId: app.id, outcome, acknowledged: ack }, "Decision signed")} disabled={!authorized || !ack || !saved} title={!saved ? "Save the draft before signing" : undefined}>Sign decision</Button>
         </div>
       </>}
+    </div>
+  </article>;
+}
+
+function EvidenceCard({ app }: { app: Application }) {
+  const { state } = useStore();
+  const { go } = useNav();
+  const ev = evaluateEvidence(app, institutionOf(state, app), rulesById(state, app.rulesVersionId));
+  const n = (s: string) => ev.findings.filter(f => f.status === s).length;
+  const pending = evidenceBlockers(ev.findings).length;
+  return <article className="card"><CardHead title="Evidence intelligence" sub="Cross-document consistency, linked to the pinned APH" action="Open workspace" onAction={() => go("Evidence Intelligence", { appId: app.id })}/>
+    <div className="pad">{ev.docs.length === 0 ? <p className="muted">No documents uploaded for comparison yet.</p> : <>
+      <div className="ev-badges"><Badge tone="red">{n("FAIL")} fail</Badge><Badge tone="amber">{n("NEEDS_REVIEW")} needs review</Badge><Badge tone="green">{n("PASS")} pass</Badge><Badge>{ev.docs.length} documents</Badge></div>
+      <p className={pending ? "evidence-warn" : "ok-text"}>{pending ? <><CircleAlert size={14}/>{pending} finding(s) awaiting officer confirmation</> : <><CheckCircle2 size={15}/>No evidence finding is blocking</>}</p></>}
+      <Button small kind="secondary" onClick={() => go("Evidence Intelligence", { appId: app.id })}><FileSearch size={14}/>Evidence workspace</Button>
     </div>
   </article>;
 }

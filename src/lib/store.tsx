@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { sha256 } from "./sha256";
 import {
-  addDays, deriveAlerts, escalationChain, institutionOf, iso, localDate, officerName, rulesById, stageOwnerFor, uid, versionInForce, type Alert,
+  addDays, deriveAlerts, escalationChain, institutionOf, iso, localDate, officerName, pickOfficer, rulesById, stageOwnerFor, uid, versionInForce, type Alert,
 } from "./engine";
+import { currentDocs, evaluateEvidence, evidenceBlockers, extractFields, fieldDef } from "./evidence";
 import {
-  AUTHORIZED_ROLES, STAGES, emptyState, type Application, type AuditEvent, type Institution, type Officer, type RuleVersion,
-  type Stage, type State, type Task, type Undertaking, type Visit,
+  AUTHORIZED_ROLES, EVIDENCE_DOC_TYPES, STAGES, emptyState, type Application, type AuditEvent, type AuditMeta, type EvidenceDocType, type EvidenceDocument,
+  type FindingReview, type Institution, type Officer, type ReviewOutcome, type RuleVersion, type SimulationSession, type Stage, type State, type Task, type Undertaking, type Visit,
 } from "./types";
 
 const STORAGE_KEY = "niyantran-state-v1";
@@ -52,12 +53,22 @@ export type Action =
   | { type: "ALERT_ESCALATE"; alertId: string }
   | { type: "ALERT_RESOLVE"; alertId: string; note: string }
   | { type: "ALERT_SYNC"; alerts: Alert[] }
+  | { type: "EV_DOC_ADD"; appId: string; docType: EvidenceDocType; fileName: string; mimeType: string; size: number; sha256: string; text: string | null; replaces?: string; note?: string }
+  | { type: "EV_FIELD_SET"; appId: string; docId: string; fieldKey: string; value: string; page: number | null; reason: string }
+  | { type: "EV_FIELD_VERIFY"; appId: string; docId: string; fieldKey: string; result: "matches-original" | "does-not-match-original"; comment: string }
+  | { type: "EV_FINDING_REVIEW"; appId: string; fieldKey: string; outcome: ReviewOutcome; comment: string; findingFingerprint: string }
+  | { type: "SIM_CREATE"; appId: string; name: string }
+  | { type: "SIM_CHANGE"; simId: string; docId: string; fieldKey: string; value: string | null; note: string }
+  | { type: "SIM_REMOVE_CHANGE"; simId: string; changeId: string }
+  | { type: "SIM_SAVE"; simId: string; name: string }
+  | { type: "SIM_DISCARD"; simId: string }
+  | { type: "SIM_REBASE"; simId: string }
   | { type: "SETTINGS"; notifications: boolean }
   | { type: "IMPORT"; state: State }
   | { type: "RESET" };
 
 type Entity = "officer" | "institution" | "rules" | "application" | "visit" | "task" | "alert" | "session" | "settings" | "data";
-type AuditDraft = { action: string; summary: string; entity: Entity; entityId: string; rulesVersion?: string | null; actor?: string; before?: unknown; after?: unknown };
+type AuditDraft = { action: string; summary: string; entity: Entity; entityId: string; rulesVersion?: string | null; actor?: string; before?: unknown; after?: unknown; meta?: Omit<AuditMeta, "correlationId"> };
 
 // Thrown when an action breaks a workflow rule; the message is shown to the officer.
 export class RuleError extends Error {}
@@ -81,9 +92,10 @@ function snapshot(s: State, entity: Entity, id: string): unknown {
 }
 
 const hashBody = (e: Omit<AuditEvent, "hash" | "prevHash">) =>
-  JSON.stringify({ seq: e.seq, at: e.at, actor: e.actor, action: e.action, summary: e.summary, entity: e.entity, entityId: e.entityId, before: e.before, after: e.after, rulesVersion: e.rulesVersion });
+  JSON.stringify({ seq: e.seq, at: e.at, actor: e.actor, action: e.action, summary: e.summary, entity: e.entity, entityId: e.entityId, before: e.before, after: e.after, rulesVersion: e.rulesVersion, meta: e.meta });
+// JSON.stringify drops meta when it is absent, so events written before it existed keep their hashes.
 
-function appendAudit(prev: State, next: State, drafts: AuditDraft[], actor: string, at: string): State {
+function appendAudit(prev: State, next: State, drafts: AuditDraft[], actor: string, at: string, correlationId: string = uid()): State {
   let prevHash = next.audit[next.audit.length - 1]?.hash ?? GENESIS;
   let seq = next.audit[next.audit.length - 1]?.seq ?? 0;
   const added = drafts.map(d => {
@@ -92,6 +104,7 @@ function appendAudit(prev: State, next: State, drafts: AuditDraft[], actor: stri
       before: d.before !== undefined ? d.before : snapshot(prev, d.entity, d.entityId),
       after: d.after !== undefined ? d.after : snapshot(next, d.entity, d.entityId),
       rulesVersion: d.rulesVersion ?? null,
+      meta: d.meta ? { correlationId, ...d.meta } : undefined,
     };
     const hash = sha256(prevHash + hashBody(body));
     const event: AuditEvent = { ...JSON.parse(JSON.stringify(body)), prevHash, hash };
@@ -120,6 +133,60 @@ function getApp(s: State, id: string) { return clone(s.applications.find(a => a.
 function getVisit(s: State, id: string) { return clone(s.visits.find(v => v.id === id) ?? fail("EVC visit not found.")); }
 function openApp(s: State, id: string) { const app = getApp(s, id); if (app.stage === "Closed") fail(`${app.ref} is closed.`); return app; }
 function rulesOf(s: State, app: Application) { return rulesById(s, app.rulesVersionId) ?? fail("The APH version pinned to this application no longer exists."); }
+
+// Who may act on an application's evidence: the officer assigned to the current stage, or a Director/Regional Officer, never one affiliated with the institution.
+export function evidenceDenial(s: State, actor: string | null, app: Application, what: string): string | null {
+  const me = s.officers.find(o => o.id === actor && o.active);
+  if (!me) return `Only an active officer can ${what}.`;
+  if (app.stage === "Closed") return `${app.ref} is closed.`;
+  if (me.affiliations.includes(app.institutionId)) return `${me.name} is affiliated with this institution and cannot ${what} (conflict of interest).`;
+  if (!AUTHORIZED_ROLES.includes(me.role) && app.assignees[app.stage] !== me.id) return `Only the officer assigned to ${app.stage} or a ${AUTHORIZED_ROLES.join(" or ")} can ${what}.`;
+  return null;
+}
+const requireEvidenceRole = (s: State, actor: string, app: Application, what: string) => { const why = evidenceDenial(s, actor, app, what); if (why) fail(why); };
+
+export const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
+export const TEXT_EVIDENCE_EXT = [".txt", ".md"];
+export const EVIDENCE_EXT = [...TEXT_EVIDENCE_EXT, ".pdf", ".png", ".jpg", ".jpeg"];
+
+// Keeps only the base name, so a crafted name cannot carry a path.
+export function safeFileName(name: string) {
+  const base = (name.split(/[\\/]/).pop() ?? "").replace(/[\u0000-\u001f<>:"|?*]/g, "").trim().slice(0, 120);
+  if (!base || /^\.+$/.test(base)) fail("Invalid file name.");
+  return base;
+}
+const extOf = (name: string) => { const i = name.lastIndexOf("."); return i < 0 ? "" : name.slice(i).toLowerCase(); };
+
+function currentDoc(app: Application, docId: string) {
+  const doc = (app.evidence ?? []).find(d => d.id === docId) ?? fail("Evidence document not found.");
+  if (doc.supersededBy) fail(`"${doc.fileName}" v${doc.version} has been replaced by a newer version.`);
+  return doc;
+}
+const evidenceRef = (d: EvidenceDocument) => ({ docId: d.id, version: d.version, sha256: d.sha256, fileName: d.fileName });
+
+function issueDeficiency(app: Application, text: string, clauseId: string | null, responseDue: string, actor: string, at: string) {
+  const id = uid();
+  app.deficiencies.push({ id, text, clauseId, issuedAt: at, issuedBy: actor, responseDue, status: "open", rounds: 1 });
+  switchClock(app, "waiting", at);
+  return id;
+}
+
+function getSim(s: State, id: string, actor: string) {
+  const sim = clone(s.simulations.find(x => x.id === id) ?? fail("Simulation not found."));
+  if (sim.status === "discarded") fail("This simulation was discarded.");
+  if (sim.createdBy !== actor) fail("Only the officer who created a simulation can change it.");
+  return sim;
+}
+const putSim = (s: State, sim: SimulationSession): State => ({ ...s, simulations: s.simulations.map(x => x.id === sim.id ? sim : x) });
+function simBase(s: State, app: Application): SimulationSession["base"] {
+  const rules = rulesOf(s, app);
+  return { fingerprint: evaluateEvidence(app, institutionOf(s, app), rules).fingerprint, rulesVersionId: rules.id, rulesVersion: rules.version, stage: app.stage };
+}
+// A simulation is stale once the real evidence or the pinned rule version has changed since it was based.
+export function isSimStale(s: State, sim: SimulationSession) {
+  const app = s.applications.find(a => a.id === sim.appId);
+  return !app || evaluateEvidence(app, institutionOf(s, app), rulesById(s, app.rulesVersionId)).fingerprint !== sim.base.fingerprint;
+}
 
 function requireAuthorized(s: State, actor: string, what: string) {
   const me = s.officers.find(o => o.id === actor);
@@ -161,6 +228,8 @@ export function advanceBlockers(s: State, app: Application): string[] {
     const unverified = app.undertakings.filter(u => u.status !== "verified");
     if (unverified.length) out.push(`Undertakings not verified: ${unverified.map(u => u.name).join(", ")}`);
     if (app.deficiencies.some(d => d.status !== "accepted")) out.push("Deficiency notices are still open or awaiting review");
+    const pending = evidenceBlockers(evaluateEvidence(app, institutionOf(s, app), rulesById(s, app.rulesVersionId)).findings);
+    if (pending.length) out.push(`Evidence findings awaiting officer confirmation: ${pending.map(f => fieldDef(f.fieldKey)?.label ?? f.fieldKey).join(", ")}`);
   }
   if (app.stage === "EVC" && !s.visits.some(v => v.appId === app.id && v.status === "completed" && v.report)) out.push("No completed EVC visit with a submitted report");
   if (app.stage === "Committee" && !app.committee) out.push("Committee recommendation not recorded");
@@ -327,8 +396,7 @@ function apply(s: State, a: Action, actor: string, now: number): { next: State; 
       const app = openApp(s, a.appId);
       if (!a.text.trim()) fail("Describe the deficiency.");
       if (!a.responseDue || a.responseDue <= at) fail("The response due date must be in the future.");
-      app.deficiencies.push({ id: uid(), text: a.text.trim(), clauseId: a.clauseId, issuedAt: at, issuedBy: actor, responseDue: a.responseDue, status: "open", rounds: 1 });
-      switchClock(app, "waiting", at);
+      issueDeficiency(app, a.text.trim(), a.clauseId, a.responseDue, actor, at);
       return one(putApp(s, app), { action: "Deficiency notice issued", summary: `${app.ref}: deficiency issued, clock paused awaiting the institution`, entity: "application", entityId: app.id, rulesVersion: rulesOf(s, app).version });
     }
     case "DEF_RESUBMIT": {
@@ -577,6 +645,150 @@ function apply(s: State, a: Action, actor: string, now: number): { next: State; 
       return { next: changed ? { ...s, alerts } : s, audits };
     }
 
+    case "EV_DOC_ADD": {
+      const app = openApp(s, a.appId);
+      requireEvidenceRole(s, actor, app, "upload evidence");
+      if (!EVIDENCE_DOC_TYPES.includes(a.docType)) fail("Choose a document type.");
+      const fileName = safeFileName(a.fileName);
+      const ext = extOf(fileName);
+      if (!EVIDENCE_EXT.includes(ext)) fail(`Unsupported file type. Allowed: ${EVIDENCE_EXT.join(", ")}.`);
+      if (!(a.size >= 0) || a.size > MAX_EVIDENCE_BYTES) fail(`Files must be at most ${MAX_EVIDENCE_BYTES / 1024 / 1024} MB.`);
+      if (!/^[0-9a-f]{64}$/.test(a.sha256)) fail("The file fingerprint is missing or invalid.");
+      if (currentDocs(app.evidence).some(d => d.sha256 === a.sha256)) fail("This exact file is already attached to the application.");
+      const old = a.replaces ? currentDoc(app, a.replaces) : null;
+      if (old && old.docType !== a.docType) fail(`A new version must be the same document type (${old.docType}).`);
+      // Text is read only for text formats; anything else is treated as unreadable rather than guessed at.
+      const { fields, extraction } = extractFields(TEXT_EVIDENCE_EXT.includes(ext) ? a.text : null, at, actor);
+      const doc: EvidenceDocument = { id: uid(), lineage: old?.lineage ?? uid(), version: old ? old.version + 1 : 1, docType: a.docType, fileName,
+        mimeType: a.mimeType.slice(0, 80), size: a.size, sha256: a.sha256, extraction, fields, uploadedBy: actor, uploadedAt: at, note: a.note?.trim() || undefined };
+      app.evidence = [...(app.evidence ?? []).map(d => d.id === old?.id ? { ...d, supersededBy: doc.id } : d), doc];
+      return one(putApp(s, app), { action: old ? "Evidence version uploaded" : "Evidence uploaded", summary: `${app.ref}: ${doc.docType} "${fileName}" v${doc.version}. ${extraction.message}`,
+        entity: "application", entityId: app.id, rulesVersion: rulesOf(s, app).version, meta: { evidence: [evidenceRef(doc), ...(old ? [evidenceRef(old)] : [])] } });
+    }
+    case "EV_FIELD_SET": {
+      const app = openApp(s, a.appId);
+      requireEvidenceRole(s, actor, app, "transcribe or correct evidence");
+      const doc = currentDoc(app, a.docId);
+      const def = fieldDef(a.fieldKey) ?? fail("Unknown field.");
+      const value = a.value.trim();
+      if (!a.reason.trim()) fail("Give the reason for this transcription or correction.");
+      if (value.length > 300) fail("The value is too long.");
+      if (a.page !== null && !(Number.isInteger(a.page) && a.page > 0)) fail("Page must be a positive whole number.");
+      const prior = doc.fields.find(f => f.key === def.key);
+      doc.fields = doc.fields.filter(f => f.key !== def.key);
+      if (value) doc.fields.push({ key: def.key, raw: value, page: a.page, line: null, snippet: "", method: "manual-transcription", candidates: 1, enteredAt: at, enteredBy: actor, note: a.reason.trim() });
+      return one(putApp(s, app), { action: prior ? "Evidence field corrected" : "Evidence field transcribed",
+        summary: `${app.ref}: ${def.label} on "${doc.fileName}" v${doc.version} ${value ? `recorded as "${value}"` : "recorded as not present"}${prior ? ` (was "${prior.raw}")` : ""}`,
+        entity: "application", entityId: app.id, rulesVersion: rulesOf(s, app).version, meta: { fieldKey: def.key, comment: a.reason.trim(), evidence: [evidenceRef(doc)] } });
+    }
+    case "EV_FIELD_VERIFY": {
+      const app = openApp(s, a.appId);
+      requireEvidenceRole(s, actor, app, "verify evidence");
+      const doc = currentDoc(app, a.docId);
+      const def = fieldDef(a.fieldKey) ?? fail("Unknown field.");
+      const field = doc.fields.find(f => f.key === def.key) ?? fail("There is no value to verify for this field.");
+      if (a.result === "does-not-match-original" && !a.comment.trim()) fail("Describe what the original document actually says.");
+      if (field.method === "manual-transcription" && field.enteredBy === actor) fail("A different officer must verify a value you transcribed.");
+      field.verification = { result: a.result, comment: a.comment.trim(), by: actor, at, docVersion: doc.version };
+      return one(putApp(s, app), { action: a.result === "matches-original" ? "Evidence field verified" : "Evidence field disputed",
+        summary: `${app.ref}: ${def.label} "${field.raw}" on "${doc.fileName}" v${doc.version} ${a.result === "matches-original" ? "checked against the original and confirmed" : "does not match the original"}`,
+        entity: "application", entityId: app.id, rulesVersion: rulesOf(s, app).version, meta: { fieldKey: def.key, outcome: a.result, comment: a.comment.trim() || undefined, evidence: [evidenceRef(doc)] } });
+    }
+    case "EV_FINDING_REVIEW": {
+      const app = openApp(s, a.appId);
+      requireEvidenceRole(s, actor, app, "review evidence findings");
+      const rules = rulesOf(s, app);
+      // Re-evaluated here from stored evidence; the client's view of the finding is not trusted.
+      const finding = evaluateEvidence(app, institutionOf(s, app), rules).findings.find(f => f.fieldKey === a.fieldKey) ?? fail("Finding not found.");
+      if (finding.fingerprint !== a.findingFingerprint) fail("The evidence behind this finding changed since you opened it. Review it again.");
+      if (finding.status === "NOT_APPLICABLE" || finding.status === "NOT_EVALUATED") fail("There is nothing to review until the finding has been evaluated.");
+      const comment = a.comment.trim();
+      if (!comment && !(a.outcome === "evidence-confirmed" && finding.status === "PASS")) fail("Record the reason for this review.");
+      const docSources = finding.sources.filter(x => x.docId !== "case-record" && x.state === "present");
+      if (a.outcome === "evidence-confirmed") {
+        const unchecked = docSources.filter(x => x.field?.verification?.result !== "matches-original");
+        if (unchecked.length) fail(`Check each value against its original document first: ${unchecked.map(x => x.fileName).join(", ")}.`);
+      }
+      const review: FindingReview = { id: uid(), findingId: finding.id, outcome: a.outcome, comment, by: actor, at, findingStatus: finding.status, findingFingerprint: finding.fingerprint,
+        evidence: docSources.map(x => ({ docId: x.docId, version: x.version!, sha256: x.sha256! })), rulesVersionId: rules.id, rulesVersion: rules.version, clauseCode: finding.rule?.clause?.code ?? null };
+      let next: State;
+      if (a.outcome === "clarification-requested") {
+        review.deficiencyId = issueDeficiency(app, `${finding.title}: ${comment}`, finding.rule?.clause?.id ?? null, addDays(at, rules.deficiencyResponseDays), actor, at);
+      }
+      if (a.outcome === "escalated") {
+        const region = institutionOf(s, app)?.region ?? "";
+        const owner = pickOfficer(s, "Regional Officer", region) ?? pickOfficer(s, "Director", region) ?? fail("No active Regional Officer or Director to escalate to.");
+        const task: Task = { id: uid(), title: `Escalated evidence finding on ${app.ref}: ${finding.title}`, owner, due: addDays(at, rules.deficiencyReviewDays), status: "open", kind: "manual", appId: app.id, createdAt: at, createdBy: actor };
+        review.taskId = task.id;
+        app.evidenceReviews = [...(app.evidenceReviews ?? []), review];
+        next = { ...putApp(s, app), tasks: [...s.tasks, task] };
+      } else {
+        app.evidenceReviews = [...(app.evidenceReviews ?? []), review];
+        next = putApp(s, app);
+      }
+      const label = { "evidence-confirmed": "Evidence confirmed", "clarification-requested": "Clarification requested", unresolved: "Finding marked unresolved", escalated: "Finding escalated" }[a.outcome];
+      return one(next, { action: label, summary: `${app.ref}: ${finding.title} [${finding.status}]${comment ? `: ${comment}` : ""}`, entity: "application", entityId: app.id, rulesVersion: rules.version,
+        meta: { findingId: finding.id, fieldKey: finding.fieldKey, outcome: a.outcome, comment: comment || undefined, clause: finding.rule?.clause ? { id: finding.rule.clause.id, code: finding.rule.clause.code } : null,
+          evidence: docSources.map(x => ({ docId: x.docId, version: x.version!, sha256: x.sha256!, fileName: x.fileName })) } });
+    }
+
+    // Simulations are kept in state.simulations with their own history. They never touch the application or the official audit chain.
+    case "SIM_CREATE": {
+      const app = openApp(s, a.appId);
+      requireEvidenceRole(s, actor, app, "run a simulation");
+      const sim: SimulationSession = { id: uid(), appId: app.id, name: a.name.trim() || `Scenario ${s.simulations.filter(x => x.appId === app.id).length + 1}`, status: "active",
+        base: simBase(s, app), changes: [], history: [{ at, by: actor, event: "Simulation created" }], createdBy: actor, createdAt: at, updatedAt: at };
+      return { next: { ...s, simulations: [...s.simulations, sim] }, audits: [] };
+    }
+    case "SIM_CHANGE": {
+      const sim = getSim(s, a.simId, actor);
+      if (isSimStale(s, sim)) fail("The real evidence changed since this simulation was based. Rebase it first.");
+      const app = getApp(s, sim.appId);
+      const doc = currentDoc(app, a.docId);
+      const def = fieldDef(a.fieldKey) ?? fail("Unknown field.");
+      const value = a.value === null ? null : a.value.trim();
+      if (value !== null && (!value || value.length > 300)) fail("Enter a hypothetical value (up to 300 characters), or choose to assume the field is absent.");
+      sim.changes = [...sim.changes.filter(c => !(c.docId === doc.id && c.fieldKey === def.key)), { id: uid(), docId: doc.id, fieldKey: def.key, value, note: a.note.trim(), by: actor, at }];
+      sim.history.push({ at, by: actor, event: `Hypothetical: ${def.label} on "${doc.fileName}" ${value === null ? "assumed absent" : `= "${value}"`}` });
+      sim.updatedAt = at;
+      return { next: putSim(s, sim), audits: [] };
+    }
+    case "SIM_REMOVE_CHANGE": {
+      const sim = getSim(s, a.simId, actor);
+      const change = sim.changes.find(c => c.id === a.changeId) ?? fail("Change not found.");
+      sim.changes = sim.changes.filter(c => c.id !== change.id);
+      sim.history.push({ at, by: actor, event: `Removed hypothetical change to ${fieldDef(change.fieldKey)?.label ?? change.fieldKey}` });
+      sim.updatedAt = at;
+      return { next: putSim(s, sim), audits: [] };
+    }
+    case "SIM_SAVE": {
+      const sim = getSim(s, a.simId, actor);
+      sim.name = a.name.trim() || sim.name;
+      sim.status = "saved";
+      sim.history.push({ at, by: actor, event: `Scenario saved as "${sim.name}"` });
+      sim.updatedAt = at;
+      return { next: putSim(s, sim), audits: [] };
+    }
+    case "SIM_DISCARD": {
+      const sim = getSim(s, a.simId, actor);
+      sim.status = "discarded";
+      sim.history.push({ at, by: actor, event: "Simulation discarded" });
+      sim.updatedAt = at;
+      return { next: putSim(s, sim), audits: [] };
+    }
+    case "SIM_REBASE": {
+      const sim = getSim(s, a.simId, actor);
+      const app = openApp(s, sim.appId);
+      requireEvidenceRole(s, actor, app, "run a simulation");
+      const live = currentDocs(app.evidence).map(d => d.id);
+      const dropped = sim.changes.filter(c => !live.includes(c.docId));
+      sim.changes = sim.changes.filter(c => live.includes(c.docId));
+      sim.base = simBase(s, app);
+      sim.history.push({ at, by: actor, event: `Rebased on current evidence${dropped.length ? `; ${dropped.length} change(s) on replaced documents dropped` : ""}` });
+      sim.updatedAt = at;
+      return { next: putSim(s, sim), audits: [] };
+    }
+
     case "SETTINGS":
       return one({ ...s, settings: { ...s.settings, notifications: a.notifications } }, { action: "Settings changed", summary: `Desktop notifications ${a.notifications ? "enabled" : "disabled"}`, entity: "settings", entityId: "settings" });
     case "IMPORT": {
@@ -587,6 +799,18 @@ function apply(s: State, a: Action, actor: string, now: number): { next: State; 
     case "RESET":
       return { next: emptyState(), audits: [] };
   }
+}
+
+// Applies one action and appends its audit events. A RuleError leaves the input state untouched, so failures never half-apply.
+export function dispatch(s: State, action: Action, actor: string, now: number): State {
+  const { next, audits } = apply(s, action, actor, now);
+  if (next === s && !audits.length) return s;
+  return action.type === "RESET" ? next : appendAudit(s, next, audits, actor, iso(now), uid());
+}
+
+// Runs a scripted sequence as one unit: all steps apply or none do.
+export function applyAll(s: State, steps: { action: Action; actor: string }[], now: number): State {
+  return steps.reduce((acc, step, i) => dispatch(acc, step.action, step.actor, now + i), s);
 }
 
 function load(): State {
@@ -602,14 +826,16 @@ type Toast = { id: string; text: string; kind: "ok" | "error" };
 type Store = {
   state: State; now: number; alerts: Alert[]; me: Officer | null;
   run: (action: Action, success?: string) => boolean;
+  runScript: (script: (s: State, now: number) => State, success?: string) => boolean;
   toast: (text: string, kind?: Toast["kind"]) => void;
   toasts: Toast[];
 };
 
 const StoreContext = createContext<Store | null>(null);
 
-export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<State>(load);
+// `initial` bypasses browser storage; used by render tests.
+export function StoreProvider({ children, initial }: { children: ReactNode; initial?: State }) {
+  const [state, setState] = useState<State>(() => initial ?? load());
   const [now, setNow] = useState(() => Date.now());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const stateRef = useRef(state);
@@ -626,9 +852,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const at = Date.now();
     try {
       const actor = action.type === "ALERT_SYNC" ? "system" : prev.currentUserId ?? "system";
-      const { next, audits } = apply(prev, action, actor, at);
-      if (next === prev && !audits.length) return true;
-      const final = action.type === "RESET" ? next : appendAudit(prev, next, audits, actor, iso(at));
+      const final = dispatch(prev, action, actor, at);
+      if (final === prev) return true;
+      stateRef.current = final;
+      setState(final);
+      if (success) toast(success);
+      return true;
+    } catch (e) {
+      if (e instanceof RuleError) { toast(e.message, "error"); return false; }
+      throw e;
+    }
+  }, [toast]);
+
+  const runScript = useCallback((script: (s: State, now: number) => State, success?: string) => {
+    try {
+      const final = script(stateRef.current, Date.now());
       stateRef.current = final;
       setState(final);
       if (success) toast(success);
@@ -669,7 +907,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [alerts, state, me]);
 
-  const value = useMemo(() => ({ state, now, alerts, me, run, toast, toasts }), [state, now, alerts, me, run, toast, toasts]);
+  const value = useMemo(() => ({ state, now, alerts, me, run, runScript, toast, toasts }), [state, now, alerts, me, run, runScript, toast, toasts]);
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

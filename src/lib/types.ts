@@ -77,6 +77,55 @@ export type Application = {
   committee?: { recommendation: "Approve" | "Approve with conditions" | "Reject"; minutes: string; by: string; at: string };
   decision?: { draft: string; draftedBy: string; draftedAt: string; outcome?: "Approved" | "Rejected"; signedBy?: string; signedAt?: string };
   closedAt?: string;
+  // Evidence Intelligence. Optional so workspaces saved before this feature still load.
+  evidence?: EvidenceDocument[];
+  evidenceReviews?: FindingReview[];
+};
+
+export const EVIDENCE_DOC_TYPES = ["Application form", "No Objection Certificate (NOC)", "Trust/Society registration", "Governing-body resolution", "Other supporting document"] as const;
+export type EvidenceDocType = (typeof EVIDENCE_DOC_TYPES)[number];
+
+// How a field value got into the system. Neither method is a human verification of the value.
+export type FieldMethod = "text-label-parser" | "manual-transcription";
+
+export type FieldVerification = { result: "matches-original" | "does-not-match-original"; comment: string; by: string; at: string; docVersion: number };
+
+export type ExtractedField = {
+  key: string; raw: string;
+  page: number | null; line: number | null; snippet: string;
+  method: FieldMethod;
+  candidates: number; // distinct labelled values found; more than one makes the extraction ambiguous
+  enteredAt: string; enteredBy: string; note?: string;
+  verification?: FieldVerification;
+};
+
+export type EvidenceDocument = {
+  id: string; lineage: string; version: number; supersededBy?: string;
+  docType: EvidenceDocType; fileName: string; mimeType: string; size: number; sha256: string;
+  extraction: { status: "extracted" | "no-fields-found" | "empty" | "unreadable"; method: "text-label-parser" | "none"; message: string; at: string };
+  fields: ExtractedField[];
+  uploadedBy: string; uploadedAt: string; note?: string;
+};
+
+export type ReviewOutcome = "evidence-confirmed" | "clarification-requested" | "unresolved" | "escalated";
+
+export type FindingReview = {
+  id: string; findingId: string; outcome: ReviewOutcome; comment: string; by: string; at: string;
+  findingStatus: string; findingFingerprint: string;
+  evidence: { docId: string; version: number; sha256: string }[];
+  rulesVersionId: string; rulesVersion: string; clauseCode: string | null;
+  deficiencyId?: string; taskId?: string;
+};
+
+export type SimulationChange = { id: string; docId: string; fieldKey: string; value: string | null; note: string; by: string; at: string };
+
+// Hypothetical scenarios live here, never on the application, so they cannot leak into official state.
+export type SimulationSession = {
+  id: string; appId: string; name: string; status: "active" | "saved" | "discarded";
+  base: { fingerprint: string; rulesVersionId: string; rulesVersion: string; stage: Stage | "Closed" };
+  changes: SimulationChange[];
+  history: { at: string; by: string; event: string }[];
+  createdBy: string; createdAt: string; updatedAt: string;
 };
 
 export type CoiDeclaration = { status: "pending" | "clear" | "conflict"; note: string; at?: string; by?: string; auto?: boolean };
@@ -113,6 +162,14 @@ export type AuditEvent = {
   seq: number; at: string; actor: string; action: string; summary: string;
   entity: string; entityId: string; before: unknown; after: unknown;
   rulesVersion: string | null; prevHash: string; hash: string;
+  meta?: AuditMeta; // hashed with the event when present
+};
+
+export type AuditMeta = {
+  correlationId: string;
+  findingId?: string; fieldKey?: string; outcome?: string; comment?: string;
+  evidence?: { docId: string; version: number; sha256: string; fileName: string }[];
+  clause?: { id: string; code: string } | null;
 };
 
 export type State = {
@@ -125,6 +182,7 @@ export type State = {
   tasks: Task[];
   alerts: Record<string, AlertRecord>;
   audit: AuditEvent[];
+  simulations: SimulationSession[];
   currentUserId: string | null;
   counters: { app: number };
   settings: { notifications: boolean };
@@ -132,5 +190,5 @@ export type State = {
 
 export const emptyState = (): State => ({
   schema: 1, officers: [], institutions: [], rules: [], applications: [], visits: [], tasks: [],
-  alerts: {}, audit: [], currentUserId: null, counters: { app: 0 }, settings: { notifications: false },
+  alerts: {}, audit: [], simulations: [], currentUserId: null, counters: { app: 0 }, settings: { notifications: false },
 });
