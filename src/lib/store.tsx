@@ -4,6 +4,7 @@ import {
   addDays, deriveAlerts, escalationChain, institutionOf, iso, localDate, officerName, pickOfficer, rulesById, stageOwnerFor, uid, versionInForce, type Alert,
 } from "./engine";
 import { currentDocs, evaluateEvidence, evidenceBlockers, extractFields, fieldDef } from "./evidence";
+import type { AuthProfile } from "./auth-profile";
 import {
   AUTHORIZED_ROLES, EVIDENCE_DOC_TYPES, STAGES, emptyState, type Application, type AuditEvent, type AuditMeta, type EvidenceDocType, type EvidenceDocument,
   type FindingReview, type Institution, type Officer, type ReviewOutcome, type RuleVersion, type SimulationSession, type Stage, type State, type Task, type Undertaking, type Visit,
@@ -17,6 +18,7 @@ export type InstitutionInput = Omit<Institution, "id" | "createdAt">;
 
 export type Action =
   | { type: "SETUP"; officer: OfficerInput }
+  | { type: "IDENTITY_SYNC"; id: string; officer: OfficerInput }
   | { type: "USER_SWITCH"; id: string }
   | { type: "OFFICER_SAVE"; id?: string; officer: OfficerInput }
   | { type: "INSTITUTION_SAVE"; id?: string; institution: InstitutionInput }
@@ -284,6 +286,20 @@ function apply(s: State, a: Action, actor: string, now: number): { next: State; 
       if (s.officers.length) fail("Setup has already been completed.");
       const officer: Officer = { ...cleanOfficer(a.officer), id: uid(), createdAt: at };
       return one({ ...s, officers: [officer], currentUserId: officer.id }, { action: "Officer created", summary: `First officer ${officer.name} (${officer.role}) set up the workspace`, entity: "officer", entityId: officer.id, actor: officer.id });
+    }
+    case "IDENTITY_SYNC": {
+      const old = s.officers.find(o => o.id === a.id);
+      const officer: Officer = { ...cleanOfficer(a.officer), id: a.id, createdAt: old?.createdAt ?? at };
+      if (old && s.currentUserId === a.id &&
+        old.name === officer.name && old.role === officer.role && old.region === officer.region &&
+        old.email === officer.email && old.active === officer.active &&
+        JSON.stringify(old.affiliations) === JSON.stringify(officer.affiliations)) return { next: s, audits: [] };
+      const officers = old ? s.officers.map(o => o.id === a.id ? officer : o) : [...s.officers, officer];
+      return one({ ...s, officers, currentUserId: a.id }, {
+        action: old ? "Authenticated profile synchronized" : "Authenticated officer added",
+        summary: `${officer.name} (${officer.role}) profile synchronized from Firebase`,
+        entity: "officer", entityId: officer.id, actor: officer.id,
+      });
     }
     case "USER_SWITCH": {
       const o = s.officers.find(x => x.id === a.id && x.active) ?? fail("Officer not found or inactive.");
@@ -813,18 +829,33 @@ export function applyAll(s: State, steps: { action: Action; actor: string }[], n
   return steps.reduce((acc, step, i) => dispatch(acc, step.action, step.actor, now + i), s);
 }
 
-function load(): State {
+function load(scope?: string, identity?: AuthProfile): State {
+  const storageKey = scope ? `${STORAGE_KEY}:${scope}` : STORAGE_KEY;
+  let state = emptyState();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed?.schema === 1) return { ...emptyState(), ...parsed };
+    if (parsed?.schema === 1) state = { ...emptyState(), ...parsed };
   } catch { /* storage unavailable or corrupt: start empty */ }
-  return emptyState();
+
+  if (!identity) return state;
+  const affiliation = state.institutions.find(institution =>
+    [institution.name, institution.code].some(value => value.toLocaleLowerCase() === identity.institutionAffiliation.trim().toLocaleLowerCase()),
+  );
+  const officer: OfficerInput = {
+    name: identity.name,
+    role: identity.role,
+    region: identity.region,
+    email: identity.email,
+    affiliations: affiliation ? [affiliation.id] : [],
+    active: true,
+  };
+  return dispatch(state, { type: "IDENTITY_SYNC", id: identity.uid, officer }, identity.uid, Date.now());
 }
 
 type Toast = { id: string; text: string; kind: "ok" | "error" };
 type Store = {
-  state: State; now: number; alerts: Alert[]; me: Officer | null;
+  state: State; now: number; alerts: Alert[]; me: Officer | null; identity: AuthProfile | null;
   run: (action: Action, success?: string) => boolean;
   runScript: (script: (s: State, now: number) => State, success?: string) => boolean;
   toast: (text: string, kind?: Toast["kind"]) => void;
@@ -834,8 +865,9 @@ type Store = {
 const StoreContext = createContext<Store | null>(null);
 
 // `initial` bypasses browser storage; used by render tests.
-export function StoreProvider({ children, initial }: { children: ReactNode; initial?: State }) {
-  const [state, setState] = useState<State>(() => initial ?? load());
+export function StoreProvider({ children, initial, scope, identity = null }: { children: ReactNode; initial?: State; scope?: string; identity?: AuthProfile | null }) {
+  const storageKey = scope ? `${STORAGE_KEY}:${scope}` : STORAGE_KEY;
+  const [state, setState] = useState<State>(() => initial ?? load(scope, identity ?? undefined));
   const [now, setNow] = useState(() => Date.now());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const stateRef = useRef(state);
@@ -878,9 +910,9 @@ export function StoreProvider({ children, initial }: { children: ReactNode; init
   }, [toast]);
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+    try { localStorage.setItem(storageKey, JSON.stringify(state)); }
     catch { toast("Could not save to browser storage. Export a backup from Settings.", "error"); }
-  }, [state, toast]);
+  }, [state, storageKey, toast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -907,7 +939,7 @@ export function StoreProvider({ children, initial }: { children: ReactNode; init
     }
   }, [alerts, state, me]);
 
-  const value = useMemo(() => ({ state, now, alerts, me, run, runScript, toast, toasts }), [state, now, alerts, me, run, runScript, toast, toasts]);
+  const value = useMemo(() => ({ state, now, alerts, me, identity, run, runScript, toast, toasts }), [state, now, alerts, me, identity, run, runScript, toast, toasts]);
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

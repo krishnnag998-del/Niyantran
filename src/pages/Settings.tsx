@@ -34,7 +34,7 @@ function OfficerModal({ id, onClose }: { id?: string; onClose: () => void }) {
 }
 
 export default function SettingsPage() {
-  const { state, me, run, toast } = useStore();
+  const { state, me, identity, run, toast } = useStore();
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState("");
   const [resetOpen, setResetOpen] = useState(false);
@@ -62,17 +62,27 @@ export default function SettingsPage() {
   };
 
   return <>
-    <PageHeading title="Settings" sub="Officers, the acting user, notifications and data stored in this browser."/>
+    <PageHeading title="Settings" sub="Officer directory, signed-in profile, notifications and data stored in this browser."/>
     <div className="grid-bottom">
       <article className="card"><CardHead title="Officers" sub={`${state.officers.filter(o => o.active).length} active`}><Button small onClick={() => setEditing("")}><Plus size={14}/>Add officer</Button></CardHead>
         {missingRoles.length > 0 && <div className="notice warn inset">No active {missingRoles.join(", ")}. Stages owned by these roles will be unassigned.</div>}
         {state.officers.length === 0 ? <Empty icon={<Users/>} title="No officers" text="Add officers to route work."/> : <div className="table-wrap"><table><thead><tr><th>Officer</th><th>Role</th><th>Region</th><th>Open tasks</th><th/></tr></thead><tbody>
-          {state.officers.map(o => <tr key={o.id}><td><strong>{o.name}</strong><small>{o.email || "No email"}{o.id === me?.id ? " · you" : ""}</small></td><td>{o.role}</td><td>{o.region}</td><td>{openTaskCount(state, o.id)}</td><td className="nowrap">{!o.active && <Badge>Inactive</Badge>} <Button small kind="secondary" onClick={() => setEditing(o.id)}>Edit</Button></td></tr>)}
+          {state.officers.map(o => <tr key={o.id}><td><strong>{o.name}</strong><small>{o.email || "No email"}{o.id === me?.id ? " · signed in" : ""}</small></td><td>{o.role}</td><td>{o.region}</td><td>{openTaskCount(state, o.id)}</td><td className="nowrap">{!o.active && <Badge>Inactive</Badge>} {o.id === me?.id ? <Badge>Firebase managed</Badge> : <Button small kind="secondary" onClick={() => setEditing(o.id)}>Edit</Button>}</td></tr>)}
         </tbody></table></div>}
       </article>
       <div className="stack">
-        <article className="card"><CardHead title="Acting as" sub="This prototype has no sign-in; choose which officer you are acting as"/>
-          <div className="pad"><select value={me?.id ?? ""} onChange={e => run({ type: "USER_SWITCH", id: e.target.value })} aria-label="Acting as">{state.officers.filter(o => o.active).map(o => <option key={o.id} value={o.id}>{o.name} · {o.role}</option>)}</select></div>
+        <article className="card"><CardHead title="Signed-in profile" sub="Identity and role are managed by your Firebase administrator"/>
+          <div className="pad">
+            {identity ? <div className="form-grid">
+              <div className="kv"><span>Name</span><strong>{identity.name}</strong></div>
+              <div className="kv"><span>Email</span><strong>{identity.email}</strong></div>
+              <div className="kv"><span>Role</span><strong>{identity.role}</strong></div>
+              <div className="kv"><span>Region</span><strong>{identity.region}</strong></div>
+              <div className="kv"><span>Job title</span><strong>{identity.jobTitle || "Not provided"}</strong></div>
+              <div className="kv"><span>Phone</span><strong>{identity.phone || "Not provided"}</strong></div>
+              <div className="kv"><span>Institution affiliation</span><strong>{identity.institutionAffiliation || "Not provided"}</strong></div>
+            </div> : <p className="muted">No Firebase profile is available in this test workspace.</p>}
+          </div>
         </article>
         <article className="card"><CardHead title="Desktop notifications" sub="Due-soon, overdue and escalated alerts for the acting officer"/>
           <div className="pad"><label className="check-field"><input type="checkbox" checked={state.settings.notifications} onChange={e => toggleNotifications(e.target.checked)}/>Show browser notifications while Niyantran is open</label></div>
