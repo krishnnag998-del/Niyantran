@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { db } from "./firebase";
-import { watchProfiles, type ProfileRecord } from "./profiles";
+import { watchGovernance, watchProfiles, type ProfileRecord } from "./profiles";
+
+// Whether the two-person rule for new Directors is switched on (null while loading).
+export function useTwoPersonRule(enabled: boolean) {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!db || !enabled) return;
+    return watchGovernance(db, setOn, () => setOn(null));
+  }, [enabled]);
+  return on;
+}
 
 // Live list of officer profiles for Directors. Firestore shares one listener between identical queries, so the sidebar badge and pages can each call this.
 export function useOfficerProfiles(enabled: boolean) {

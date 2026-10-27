@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessProblem, isDirectorEmail, parseProfile, toAuthProfile, validateEdit, validateRequest } from "./profiles";
+import { accessProblem, directorStep, liveNomination, parseProfile, toAuthProfile, validateEdit, validateRequest } from "./profiles";
 
 // Synthetic accounts only.
 const active = { name: "Demo Officer", email: "Demo.Officer@example.org", role: "Scrutiny Officer", region: "North", status: "active" };
@@ -24,10 +24,27 @@ describe("officer profiles", () => {
     expect(accessProblem(rec, active.email)).toMatch(/No officer role/);
   });
 
-  it("recognises only listed Director emails, ignoring case and spaces", () => {
-    expect(isDirectorEmail(" KrishnNag998@Gmail.com ")).toBe(true);
-    expect(isDirectorEmail("someone.else@example.org")).toBe(false);
-    expect(isDirectorEmail(null)).toBe(false);
+  describe("two-person rule for new Directors", () => {
+    const officer = parseProfile("officer", { ...active, role: "Scrutiny Officer" });
+    const nominatedByA = parseProfile("officer", { ...active, nominatedBy: "dirA", nominatedAt: "2026-10-27T10:00:00.000Z" });
+
+    it("allows one Director to appoint the first additional Director alone", () => {
+      expect(directorStep(officer, "dirA", false)).toBe("solo");
+    });
+    it("then needs a nomination and a confirmation by a different Director", () => {
+      expect(directorStep(officer, "dirA", true)).toBe("nominate");
+      expect(directorStep(nominatedByA, "dirA", true)).toBe("awaiting-other");
+      expect(directorStep(nominatedByA, "dirB", true)).toBe("confirm");
+    });
+    it("does not reuse a nomination that was already used for an earlier approval", () => {
+      const used = parseProfile("officer", { ...active, nominatedBy: "dirA", nominatedAt: "2026-10-27T10:00:00.000Z", directorApprovedAt: "2026-10-27T11:00:00.000Z" });
+      expect(liveNomination(used)).toBe(false);
+      expect(directorStep(used, "dirB", true)).toBe("nominate");
+    });
+    it("never offers to promote yourself or an existing Director", () => {
+      expect(directorStep(parseProfile("dirA", active), "dirA", true)).toBe("self");
+      expect(directorStep(parseProfile("dirB", { ...active, role: "Director" }), "dirA", true)).toBe("already");
+    });
   });
 
   it("validates a Director's edits to an officer", () => {

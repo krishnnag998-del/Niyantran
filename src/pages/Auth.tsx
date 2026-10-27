@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { Clock3, Crown, Globe2, Landmark, LockKeyhole, MailCheck, ShieldCheck, ShieldX } from "lucide-react";
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, sendEmailVerification, sendPasswordResetEmail, updateProfile, type User } from "firebase/auth";
+import { Clock3, Globe2, Landmark, LockKeyhole, ShieldCheck, ShieldX } from "lucide-react";
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, sendPasswordResetEmail, updateProfile, type User } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
-import { accessProblem, claimDirector, isDirectorEmail, requestAccess, validateRequest, type AccessRequest, type ProfileRecord } from "@/lib/profiles";
+import { accessProblem, requestAccess, validateRequest, type AccessRequest, type ProfileRecord } from "@/lib/profiles";
 import { ROLES, type Role } from "@/lib/types";
 
 const emptyRequest = (name = ""): AccessRequest => ({ name, requestedRole: "Scrutiny Officer", region: "", jobTitle: "", phone: "", institutionAffiliation: "" });
@@ -51,60 +51,8 @@ function AccountBox({ user, rec }: { user?: User; rec?: ProfileRecord }) {
   </div>;
 }
 
-// Listed Director accounts activate themselves here instead of waiting for an approval.
-function DirectorActivation({ user, rec, onSignOut }: { user: User; rec?: ProfileRecord; onSignOut?: () => void }) {
-  const [, refresh] = useState(0);
-  const [name, setName] = useState(rec?.name || user.displayName || "");
-  const [region, setRegion] = useState(rec?.region || "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const attempt = async (op: () => Promise<unknown>, done?: string) => {
-    setBusy(true); setError(""); setNotice("");
-    try { await op(); if (done) setNotice(done); }
-    catch (reason) { setError(friendlyAuthError(reason)); }
-    finally { setBusy(false); }
-  };
-  const signOutButton = <button className="auth-button secondary" onClick={onSignOut}>Sign out</button>;
-  // The security rules read email_verified from the ID token, so refresh the token after the user clicks the link.
-  const recheck = () => attempt(async () => {
-    await user.reload();
-    await user.getIdToken(true);
-    refresh(n => n + 1);
-    if (!user.emailVerified) throw new Error("Not verified yet. Open the link in the email we sent, then press Continue.");
-  });
-
-  if (!user.emailVerified) return <>
-    <div className="auth-icon director"><MailCheck size={21}/></div>
-    <p className="auth-eyebrow">DIRECTOR ACCESS</p>
-    <h2>Verify your email</h2>
-    <p className="auth-copy">Before granting Director access we need to confirm you own <strong>{user.email}</strong>. Open the verification link we emailed you, then press Continue.</p>
-    {error && <p className="auth-error" role="alert">{error}</p>}
-    {notice && <p className="auth-notice" role="status">{notice}</p>}
-    <button className="auth-button" onClick={recheck} disabled={busy}>{busy ? "Checking…" : "I've verified it, continue"}</button>
-    <button className="auth-button secondary" onClick={() => attempt(() => sendEmailVerification(user), "Verification email sent. Check your inbox and spam folder.")} disabled={busy}>Send the email again</button>
-    {signOutButton}
-  </>;
-
-  return <>
-    <div className="auth-icon director"><Crown size={21}/></div>
-    <p className="auth-eyebrow">DIRECTOR ACCESS</p>
-    <h2>Activate Director access</h2>
-    <p className="auth-copy"><strong>{user.email}</strong> is on the Director list. Confirm your details to open the workspace and start approving officers.</p>
-    {error && <p className="auth-error" role="alert">{error}</p>}
-    <form className="auth-form" onSubmit={e => { e.preventDefault(); if (db) void attempt(() => claimDirector(db!, user, { name, region })); }}>
-      <label>Full name<input type="text" required maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="Your full name"/></label>
-      <label>Region<input type="text" required maxLength={60} value={region} onChange={e => setRegion(e.target.value)} placeholder="e.g. North"/></label>
-      <button className="auth-button" type="submit" disabled={busy}>{busy ? "Activating…" : "Activate Director access"}</button>
-    </form>
-    <AccountBox user={user}/>
-    {signOutButton}
-  </>;
-}
-
 function AccessStatus({ access, user, onSignOut }: { access: ProfileRecord | "none"; user?: User; onSignOut?: () => void }) {
   const signOutButton = <button className="auth-button secondary" onClick={onSignOut}>Sign out</button>;
-  if (user && isDirectorEmail(user.email)) return <DirectorActivation user={user} rec={access === "none" ? undefined : access} onSignOut={onSignOut}/>;
   if (access === "none") return user ? <>
     <div className="auth-icon"><LockKeyhole size={21}/></div>
     <p className="auth-eyebrow">REQUEST ACCESS</p>
@@ -177,7 +125,7 @@ export default function AuthPage({ loading = false, access, user, error: configE
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [details, setDetails] = useState<AccessRequest>(emptyRequest());
-  const [mode, setMode] = useState<"signin" | "signup" | "director">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -208,20 +156,6 @@ export default function AuthPage({ loading = false, access, user, error: configE
       return;
     }
     void execute(() => signInWithEmailAndPassword(client, email.trim(), password));
-  };
-
-  // Email/password Director accounts must verify the address before the security rules accept the Director profile.
-  const directorSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const client = auth;
-    if (!client) return;
-    if (!isDirectorEmail(email)) { setError("This email is not on the Director list. Use officer sign-up to request access instead."); return; }
-    const create = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("name") === "create";
-    void execute(async () => {
-      if (!create) { await signInWithEmailAndPassword(client, email.trim(), password); return; }
-      const credential = await createUserWithEmailAndPassword(client, email.trim(), password);
-      await sendEmailVerification(credential.user);
-    });
   };
 
   const google = () => {
@@ -259,26 +193,6 @@ export default function AuthPage({ loading = false, access, user, error: configE
           <p className="auth-error" role="alert">{configError}</p>
           <p className="auth-copy">Your authenticated session is active, but the officer profile could not be checked. Try again later or sign out.</p>
           <button className="auth-button" onClick={onSignOut}>Sign out</button>
-        </> : mode === "director" ? <>
-          <div className="auth-icon director"><Crown size={21}/></div>
-          <p className="auth-eyebrow">DIRECTOR ACCESS</p>
-          <h2>Director sign-in</h2>
-          <p className="auth-copy">For listed Director accounts only. You get Director access straight away, with no approval step, and then approve other officers from the Officer Access page.</p>
-          {configError && <p className="auth-error" role="alert">{configError}</p>}
-          {error && <p className="auth-error" role="alert">{error}</p>}
-          {notice && <p className="auth-notice" role="status">{notice}</p>}
-          <button className="auth-button" onClick={google} disabled={busy || Boolean(configError)}><Globe2 size={17}/>Continue with Google</button>
-          <p className="auth-help">Quickest: Google confirms your email for you.</p>
-          <div className="auth-divider"><span>or use email and password</span></div>
-          <form onSubmit={directorSubmit} className="auth-form">
-            <label>Director email<input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} placeholder="director@organization.gov.in"/></label>
-            <label>Password<input type="password" autoComplete="current-password" minLength={6} required value={password} onChange={event => setPassword(event.target.value)} placeholder="At least 6 characters"/></label>
-            <div className="auth-row">
-              <button className="auth-google" type="submit" name="signin" disabled={busy || Boolean(configError)}>Sign in</button>
-              <button className="auth-google" type="submit" name="create" disabled={busy || Boolean(configError)}>Create account</button>
-            </div>
-          </form>
-          <p className="auth-switch"><button type="button" onClick={() => { setMode("signin"); setError(""); setNotice(""); }}>Back to officer sign-in</button></p>
         </> : <>
           <p className="auth-eyebrow">{mode === "signup" ? "NEW ACCOUNT" : "OFFICER SIGN-IN"}</p>
           <h2>{mode === "signup" ? "Create your account" : "Welcome back"}</h2>
@@ -307,7 +221,6 @@ export default function AuthPage({ loading = false, access, user, error: configE
               {mode === "signup" ? "Sign in" : "Create an account"}
             </button>
           </p>
-          <p className="auth-switch"><button type="button" onClick={() => { setMode("director"); setError(""); setNotice(""); }}>Director access →</button></p>
         </>}
         <footer className="auth-legal">Niyantran is a workflow prototype and is not an official AICTE service.</footer>
       </div>

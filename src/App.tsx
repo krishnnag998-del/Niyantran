@@ -11,6 +11,7 @@ import { useStore } from "@/lib/store";
 import AccessPage from "@/pages/Access";
 import DirectorDesk from "@/pages/DirectorDesk";
 import { useOfficerProfiles } from "@/lib/useOfficerProfiles";
+import { isActiveDirector, liveNomination } from "@/lib/profiles";
 import { isMine } from "@/pages/Alerts";
 import AlertsPage from "@/pages/Alerts";
 import ApplicationsPage from "@/pages/Applications";
@@ -80,7 +81,8 @@ function Sidebar({ page, params, go, open, close, collapsed, toggle, onSignOut }
   const { state, alerts, me, identity } = useStore();
   const director = identity?.role === "Director";
   const { rows: profiles } = useOfficerProfiles(director);
-  const pendingAccess = profiles?.filter(r => r.status === "pending").length ?? 0;
+  // Requests to decide, plus Director nominations made by someone else that are waiting for this Director to confirm.
+  const pendingAccess = profiles?.filter(r => r.status === "pending" || (liveNomination(r) && !isActiveDirector(r) && r.nominatedBy !== identity?.uid)).length ?? 0;
   const myTasks = state.tasks.filter(t => t.status === "open" && t.owner === me?.id).length;
   const openAlerts = alerts.filter(a => !state.alerts[a.id]?.resolvedAt).length;
   const count = (e: NavEntry) => e.stage ? state.applications.filter(a => a.stage === e.stage).length

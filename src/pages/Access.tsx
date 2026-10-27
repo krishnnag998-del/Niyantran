@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { KeyRound, Pencil, ShieldCheck, ShieldX, Trash2, UserCheck, UserPlus } from "lucide-react";
+import { Crown, KeyRound, Pencil, ShieldCheck, ShieldX, Trash2, UserCheck, UserPlus, Users } from "lucide-react";
 import { Badge, Button, CardHead, Empty, Field, Modal, PageHeading, Tabs } from "@/components/kit";
 import { fmtDateTime } from "@/lib/engine";
 import { auth, db } from "@/lib/firebase";
-import { createProfile, deleteProfile, editProfile, reviewProfile, sendReset, type ProfileEdit, type ProfileRecord, type ProfileStatus } from "@/lib/profiles";
+import {
+  appointFirstAdditionalDirector, confirmDirector, createProfile, deleteProfile, directorStep, editProfile, enableTwoPersonRule, isActiveDirector, liveNomination, nominateDirector,
+  reviewProfile, sendReset, withdrawNomination, type ProfileEdit, type ProfileRecord, type ProfileStatus,
+} from "@/lib/profiles";
 import { useNav } from "@/lib/nav";
 import { useStore } from "@/lib/store";
-import { useOfficerProfiles } from "@/lib/useOfficerProfiles";
+import { useOfficerProfiles, useTwoPersonRule } from "@/lib/useOfficerProfiles";
 import { ROLES, type Role } from "@/lib/types";
 
 // Directors approve access requests, edit officers, reset passwords and remove access. firestore.rules refuses these writes from anyone else.
@@ -20,6 +23,7 @@ export default function AccessPage() {
   const { params } = useNav();
   const director = identity?.role === "Director";
   const { rows, error } = useOfficerProfiles(director);
+  const twoPerson = useTwoPersonRule(director);
   const [tab, setTab] = useState<Tab>(() => (["pending", "active", "inactive"] as string[]).includes(params.tab ?? "") ? params.tab as Tab : "pending");
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
@@ -40,6 +44,7 @@ export default function AccessPage() {
       actions={<Button kind="secondary" onClick={() => setAdding(true)}><UserPlus size={16}/>Add by account ID</Button>}/>
     <div className="human-note"><ShieldCheck/><div><strong>Enforced on the server</strong><span>Firestore security rules allow only an active Director to change roles, edit or delete profiles. Applicants can only file their own pending request, and you cannot remove your own Director access.</span></div></div>
     {error && <div className="notice warn" role="alert">{error}</div>}
+    <TwoPersonStatus on={twoPerson} directors={list.filter(isActiveDirector).length} nominations={list.filter(r => liveNomination(r) && !isActiveDirector(r))} meUid={identity!.uid}/>
     <div className="toolbar bare">
       <Tabs<Tab> value={tab} onChange={setTab} tabs={[
         { id: "pending", label: "Awaiting approval", count: pending.length },
@@ -50,14 +55,34 @@ export default function AccessPage() {
     </div>
     {rows === null && !error ? <article className="card"><p className="muted pad">Loading officer profiles…</p></article>
       : shown.length === 0 ? <article className="card"><Empty icon={<UserCheck/>} title={q ? "No matches" : tab === "pending" ? "No requests waiting" : "Nobody here"} text={q ? "Try a different search." : tab === "pending" ? "New sign-ups appear here for review." : "Profiles move here as you review them."}/></article>
-      : <div className="stack">{shown.map(r => <ProfileCard key={r.uid} rec={r} self={r.uid === identity!.uid}/>)}</div>}
+      : <div className="stack">{shown.map(r => <ProfileCard key={r.uid} rec={r} self={r.uid === identity!.uid} twoPerson={twoPerson}/>)}</div>}
     {adding && <AddProfile existing={list} onClose={() => setAdding(false)}/>}
   </>;
 }
 
-function ProfileCard({ rec, self }: { rec: ProfileRecord; self: boolean }) {
+// Shows whether the two-person rule is on, and any Director nominations waiting for a second Director.
+export function TwoPersonStatus({ on, directors, nominations, meUid }: { on: boolean | null; directors: number; nominations: ProfileRecord[]; meUid: string }) {
   const { identity, toast } = useStore();
-  const [role, setRole] = useState<Role>(rec.role ?? rec.requestedRole ?? "Scrutiny Officer");
+  const [busy, setBusy] = useState(false);
+  if (on === null) return null;
+  const forMe = nominations.filter(r => r.nominatedBy !== meUid);
+  const enable = async () => {
+    if (!db) return;
+    setBusy(true);
+    try { await enableTwoPersonRule(db, { uid: identity!.uid, name: identity!.name }); toast("Two-person rule switched on"); }
+    catch (reason) { toast(failure(reason, "The rule could not be switched on."), "error"); setBusy(false); }
+  };
+  return <div className={`notice ${on ? "ok" : "warn"}`} role="status">
+    <Users size={16}/>
+    {on ? <span><strong>Two-person rule is on.</strong> A new Director needs a nomination by one Director and confirmation by a different Director. {forMe.length > 0 && <strong>{forMe.length} nomination{forMe.length === 1 ? "" : "s"} waiting for your confirmation.</strong>}</span>
+      : <span><strong>Two-person rule is not on yet.</strong> {directors < 2 ? "As the only Director, you can appoint one more Director on your own. Doing so switches the rule on permanently." : `There are already ${directors} Directors.`}</span>}
+    {!on && directors >= 2 && <Button small onClick={enable} disabled={busy}>Switch it on now</Button>}
+  </div>;
+}
+
+function ProfileCard({ rec, self, twoPerson }: { rec: ProfileRecord; self: boolean; twoPerson: boolean | null }) {
+  const { identity, toast } = useStore();
+  const [role, setRole] = useState<Role>(liveNomination(rec) && !isActiveDirector(rec) ? "Director" : rec.role ?? rec.requestedRole ?? "Scrutiny Officer");
   const [region, setRegion] = useState(rec.region);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -79,6 +104,7 @@ function ProfileCard({ rec, self }: { rec: ProfileRecord; self: boolean }) {
     finally { setBusy(false); }
   };
   const changed = role !== rec.role || region.trim() !== rec.region;
+  const promoting = role === "Director" && !isActiveDirector(rec);
 
   return <article className="card">
     <CardHead title={rec.name || "(no name)"} sub={`${rec.email} · account ${rec.uid}`}><Badge tone={STATUS_TONE[rec.status]}>{rec.status}</Badge></CardHead>
@@ -99,6 +125,7 @@ function ProfileCard({ rec, self }: { rec: ProfileRecord; self: boolean }) {
         <Field label="Region"><input value={region} onChange={e => setRegion(e.target.value)} disabled={busy}/></Field>
         {!self && rec.status !== "disabled" && rec.status !== "rejected" && <Field label={rec.status === "pending" ? "Reason (required to reject)" : "Reason (required to disable)"} wide><input value={note} onChange={e => setNote(e.target.value)} disabled={busy}/></Field>}
       </div>
+      {promoting && <DirectorPanel rec={rec} region={region} twoPerson={twoPerson} onCancel={() => setRole(rec.role ?? (rec.requestedRole !== "Director" ? rec.requestedRole : null) ?? "Scrutiny Officer")}/>}
       <div className="access-actions">
         <div className="row-actions">
           <Button small kind="ghost" onClick={() => setEditing(true)} disabled={busy}><Pencil size={14}/>Edit details</Button>
@@ -107,16 +134,56 @@ function ProfileCard({ rec, self }: { rec: ProfileRecord; self: boolean }) {
         </div>
         <div className="row-actions">
           {rec.status === "pending" && <><Button kind="danger" disabled={busy || !note.trim()} onClick={() => act("rejected", `Request from ${rec.name} rejected`)}>Reject</Button>
-            <Button disabled={busy || !region.trim()} onClick={() => act("active", `${rec.name} approved as ${role}`)}>Approve as {role}</Button></>}
+            {!promoting && <Button disabled={busy || !region.trim()} onClick={() => act("active", `${rec.name} approved as ${role}`)}>Approve as {role}</Button>}</>}
           {rec.status === "active" && <>{!self && <Button kind="danger" disabled={busy || !note.trim()} onClick={() => act("disabled", `${rec.name} disabled`)}>Disable access</Button>}
-            <Button disabled={busy || !changed || !region.trim()} onClick={() => act("active", `${rec.name} updated`)}>Save role & region</Button></>}
-          {(rec.status === "rejected" || rec.status === "disabled") && <Button disabled={busy || !region.trim()} onClick={() => act("active", `${rec.name} activated as ${role}`)}>Activate as {role}</Button>}
+            {!promoting && <Button disabled={busy || !changed || !region.trim()} onClick={() => act("active", `${rec.name} updated`)}>Save role & region</Button>}</>}
+          {(rec.status === "rejected" || rec.status === "disabled") && !promoting && <Button disabled={busy || !region.trim()} onClick={() => act("active", `${rec.name} activated as ${role}`)}>Activate as {role}</Button>}
         </div>
       </div>
     </div>
     {editing && <EditProfile rec={rec} self={self} onClose={() => setEditing(false)}/>}
     {deleting && <DeleteProfile rec={rec} onClose={() => setDeleting(false)}/>}
   </article>;
+}
+
+// The two-person rule for Director access: nominate, then a different Director confirms.
+function DirectorPanel({ rec, region, twoPerson, onCancel }: { rec: ProfileRecord; region: string; twoPerson: boolean | null; onCancel: () => void }) {
+  const { identity, toast } = useStore();
+  const [busy, setBusy] = useState(false);
+  const me = { uid: identity!.uid, name: identity!.name };
+  if (twoPerson === null) return <div className="director-panel"><p className="muted">Checking the two-person rule…</p></div>;
+  const step = directorStep(rec, me.uid, twoPerson);
+  const run = async (op: () => Promise<unknown>, done: string) => {
+    if (!db) return;
+    setBusy(true);
+    try { await op(); toast(done); }
+    catch (reason) { toast(failure(reason, "The change was refused."), "error"); }
+    finally { setBusy(false); }
+  };
+  const when = rec.nominatedAt ? fmtDateTime(rec.nominatedAt) : "";
+  return <div className="director-panel">
+    <div className="director-panel-head"><Crown size={16}/><strong>Director access needs two Directors</strong></div>
+    {step === "solo" && <>
+      <p>You are the only Director, so you can appoint this one Director yourself. This switches the two-person rule on permanently: every Director after this needs a second Director to confirm.</p>
+      <div className="row-actions"><Button kind="secondary" small onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button small disabled={busy || !region.trim()} onClick={() => run(() => appointFirstAdditionalDirector(db!, rec, region, me), `${rec.name} is now a Director. Two-person rule is on.`)}>Appoint as Director</Button></div>
+    </>}
+    {step === "nominate" && <>
+      <p>Step 1 of 2: nominate {rec.name || "this officer"}. Nothing changes for them until a <strong>different</strong> Director confirms.</p>
+      <div className="row-actions"><Button kind="secondary" small onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button small disabled={busy} onClick={() => run(() => nominateDirector(db!, rec, me), "Nomination sent. Another Director must confirm.")}>Nominate as Director</Button></div>
+    </>}
+    {step === "awaiting-other" && <>
+      <p>You nominated {rec.name || "this officer"} on {when}. Waiting for another Director to confirm. You cannot confirm your own nomination.</p>
+      <div className="row-actions"><Button kind="secondary" small disabled={busy} onClick={() => run(() => withdrawNomination(db!, rec, me), "Nomination withdrawn")}>Withdraw nomination</Button></div>
+    </>}
+    {step === "confirm" && <>
+      <p>Step 2 of 2: <strong>{rec.nominatedByName ?? "Another Director"}</strong> nominated {rec.name || "this officer"} on {when}. Confirm only if you agree they should have full Director access.</p>
+      <div className="row-actions"><Button kind="danger" small disabled={busy} onClick={() => run(() => withdrawNomination(db!, rec, me), "Nomination declined")}>Decline</Button>
+        <Button small disabled={busy || !region.trim()} onClick={() => run(() => confirmDirector(db!, rec, region, me), `${rec.name} is now a Director`)}>Confirm as Director</Button></div>
+    </>}
+    {(step === "self" || step === "already") && <p className="muted">No action needed.</p>}
+  </div>;
 }
 
 function EditProfile({ rec, self, onClose }: { rec: ProfileRecord; self: boolean; onClose: () => void }) {
@@ -137,7 +204,7 @@ function EditProfile({ rec, self, onClose }: { rec: ProfileRecord; self: boolean
       <Field label="Email" hint="Tied to the officer's login, so it can't be changed here."><input value={rec.email} disabled/></Field>
       <Field label="Officer role" hint={rec.status === "active" ? undefined : "Applies once the officer is approved or activated."}>
         <select value={v.role ?? ""} onChange={e => setV({ ...v, role: (e.target.value || null) as Role | null })} disabled={self}>
-          {rec.status !== "active" && <option value="">None yet</option>}{ROLES.map(r => <option key={r}>{r}</option>)}
+          {rec.status !== "active" && <option value="">None yet</option>}{ROLES.filter(r => r !== "Director" || isActiveDirector(rec)).map(r => <option key={r}>{r}</option>)}
         </select></Field>
       <Field label="Region"><input value={v.region} onChange={set("region")}/></Field>
       <Field label="Job title"><input value={v.jobTitle} onChange={set("jobTitle")}/></Field>
@@ -187,7 +254,7 @@ function AddProfile({ existing, onClose }: { existing: ProfileRecord[]; onClose:
       <Field label="Account ID" wide hint={clash ? `A profile already exists for ${clash.name || "this account"}. Review it in the list instead.` : undefined}><input value={uid} onChange={e => setUid(e.target.value)} placeholder="e.g. 3tKbrlnMsPPGOdSo4OjMWsnKL6d2"/></Field>
       <Field label="Full name"><input value={name} onChange={e => setName(e.target.value)}/></Field>
       <Field label="Email"><input type="email" value={email} onChange={e => setEmail(e.target.value)}/></Field>
-      <Field label="Officer role"><select value={role} onChange={e => setRole(e.target.value as Role)}>{ROLES.map(r => <option key={r}>{r}</option>)}</select></Field>
+      <Field label="Officer role"><select value={role} onChange={e => setRole(e.target.value as Role)}>{ROLES.filter(r => r !== "Director").map(r => <option key={r}>{r}</option>)}</select></Field>
       <Field label="Region"><input value={region} onChange={e => setRegion(e.target.value)}/></Field>
       <Field label="Job title" wide><input value={jobTitle} onChange={e => setJobTitle(e.target.value)}/></Field>
     </div>

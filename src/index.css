@@ -1033,3 +1033,6 @@ button.desk-tile:hover { border-color: var(--green-600); transform: translateY(-
 .desk-bar { height: 8px; background: var(--surface-3); border-radius: 4px; overflow: hidden; }
 .desk-bar i { display: block; height: 100%; background: var(--green-600); border-radius: 4px; }
 .access-actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid var(--line-2); padding-top: 12px; }
+.director-panel { border: 1px dashed var(--gold); background: color-mix(in srgb, var(--gold) 8%, var(--surface)); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text); }
+.director-panel p { margin: 0; line-height: 1.5; }
+.director-panel-head { display: flex; align-items: center; gap: 8px; color: var(--gold-ink); }

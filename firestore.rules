@@ -16,6 +16,41 @@ service cloud.firestore {
         && optText(d, 'phone', 30) && optText(d, 'jobTitle', 120) && optText(d, 'institutionAffiliation', 160);
     }
 
+    // ---- Two-person rule for new Directors ----
+    // meta/governance.twoPerson starts absent. While it is absent, one Director may appoint one more Director alone,
+    // and that appointment must switch the rule on in the same write. Once on, it can never be switched off.
+    function govPath() { return /databases/$(database)/documents/meta/governance; }
+    function twoPersonOn() { return exists(govPath()) && get(govPath()).data.twoPerson == true; }
+    function twoPersonOnAfter() { return existsAfter(govPath()) && getAfter(govPath()).data.twoPerson == true; }
+
+    function wasDirector() { return resource != null && resource.data.status == 'active' && resource.data.role == 'Director'; }
+    function becomesDirector(d) { return d.status == 'active' && d.role == 'Director' && !wasDirector(); }
+    function prev(k) { return resource == null ? null : resource.data.get(k, null); }
+    function prevNominator() { return prev('nominatedBy'); }
+    // A nomination counts only if it was made after the profile's last Director approval, so an old one cannot be reused.
+    function freshNomination() {
+      return prevNominator() != null && prev('nominatedAt') != null
+        && (prev('directorApprovedAt') == null || prev('nominatedAt') > prev('directorApprovedAt'));
+    }
+
+    // The nomination is left exactly as it was, cleared, or freshly set by the acting Director (never for themselves).
+    function nominationOk(d, userId) {
+      return d.get('nominatedBy', null) == null
+        || (d.get('nominatedBy', null) == prevNominator() && d.get('nominatedAt', null) == prev('nominatedAt'))
+        || (d.get('nominatedBy', null) == request.auth.uid && d.get('nominatedAt', null) == request.time && request.auth.uid != userId);
+    }
+
+    function promotionOk(d) {
+      return !becomesDirector(d) || (
+        d.directorApprovedBy == request.auth.uid && d.directorApprovedAt == request.time && twoPersonOnAfter()
+        && (
+          // Normal path: confirmed by a different Director from the one who nominated.
+          (twoPersonOn() && freshNomination() && prevNominator() != request.auth.uid && d.nominatedBy == prevNominator())
+          // One-time path: the first additional Director, which also switches the rule on.
+          || !twoPersonOn()
+        ));
+    }
+
     // A user filing their own access request: always pending, their own email, and no role.
     function ownRequest(userId) {
       let d = request.resource.data;
@@ -31,37 +66,36 @@ service cloud.firestore {
       let d = request.resource.data;
       return isDirector()
         && d.keys().hasOnly(['name', 'email', 'phone', 'jobTitle', 'region', 'institutionAffiliation', 'requestedRole', 'role', 'status',
-                             'createdAt', 'updatedAt', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'reviewNote'])
+                             'createdAt', 'updatedAt', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'reviewNote',
+                             'nominatedBy', 'nominatedByName', 'nominatedAt', 'directorApprovedBy', 'directorApprovedByName', 'directorApprovedAt'])
         && d.status in ['pending', 'active', 'rejected', 'disabled'] && commonFields(d)
         && (d.status != 'active' || d.role in roles())
         && d.reviewedBy == request.auth.uid && d.reviewedAt == request.time
         && optText(d, 'reviewNote', 500)
         && (resource == null || d.email == resource.data.email)
-        && (request.auth.uid != userId || (d.status == 'active' && d.role == 'Director'));
-    }
-
-    // Accounts allowed to activate Director access on their own. Keep in step with DIRECTOR_EMAILS in src/lib/profiles.ts.
-    function directorEmails() { return ['krishnnag998@gmail.com']; }
-
-    // A listed account with a verified email activating its own Director profile.
-    function claimDirector(userId) {
-      let d = request.resource.data;
-      return signedIn() && request.auth.uid == userId
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in directorEmails()
-        && d.email == request.auth.token.email
-        && d.keys().hasOnly(['name', 'email', 'phone', 'jobTitle', 'region', 'institutionAffiliation', 'requestedRole', 'role', 'status', 'createdAt', 'updatedAt'])
-        && d.status == 'active' && d.role == 'Director' && commonFields(d)
-        && d.updatedAt == request.time;
+        && (request.auth.uid != userId || (d.status == 'active' && d.role == 'Director'))
+        && nominationOk(d, userId)
+        && promotionOk(d);
     }
 
     match /profiles/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || isDirector());
-      allow create: if ownRequest(userId) || directorWrite(userId) || claimDirector(userId);
+      allow create: if ownRequest(userId) || directorWrite(userId);
       // Applicants may revise a pending or rejected request; active and disabled profiles change only through a Director.
-      allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId) || claimDirector(userId);
+      allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId);
       // Removes Niyantran access only; the Firebase login itself is untouched.
       allow delete: if isDirector() && request.auth.uid != userId;
+    }
+
+    match /meta/governance {
+      allow read: if isDirector();
+      // Created once, set to on, and never changed or removed.
+      allow create: if isDirector()
+        && request.resource.data.keys().hasOnly(['twoPerson', 'since', 'by', 'byName'])
+        && request.resource.data.twoPerson == true
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.since == request.time;
+      allow update, delete: if false;
     }
 
     match /{document=**} {

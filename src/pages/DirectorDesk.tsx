@@ -4,11 +4,11 @@ import { Badge, Button, CardHead, Empty, PageHeading } from "@/components/kit";
 import { fmtDateTime } from "@/lib/engine";
 import { db } from "@/lib/firebase";
 import { useNav } from "@/lib/nav";
-import { reviewProfile, type ProfileRecord } from "@/lib/profiles";
+import { isActiveDirector, liveNomination, reviewProfile, type ProfileRecord } from "@/lib/profiles";
 import { useStore } from "@/lib/store";
-import { useOfficerProfiles } from "@/lib/useOfficerProfiles";
+import { useOfficerProfiles, useTwoPersonRule } from "@/lib/useOfficerProfiles";
 import { ROLES } from "@/lib/types";
-import { STATUS_TONE } from "@/pages/Access";
+import { STATUS_TONE, TwoPersonStatus } from "@/pages/Access";
 
 // The Director's landing page: who is waiting for access, who has it, and what was decided recently.
 export default function DirectorDesk() {
@@ -16,6 +16,7 @@ export default function DirectorDesk() {
   const { go } = useNav();
   const director = identity?.role === "Director";
   const { rows, error } = useOfficerProfiles(director);
+  const twoPerson = useTwoPersonRule(director);
   if (!director) return <article className="card"><Empty icon={<ShieldX/>} title="Directors only" text="The Director Desk is available to active Directors."/></article>;
 
   const list = rows ?? [];
@@ -31,6 +32,7 @@ export default function DirectorDesk() {
     <PageHeading eyebrow={<Badge tone="amber"><Crown size={12}/> DIRECTOR</Badge>} title={`Director Desk`} sub={`Welcome, ${identity!.name}. Review access requests, manage officers and keep an eye on decisions waiting for your signature.`}
       actions={<Button onClick={() => go("Officer Access")}><UserCheck size={16}/>Manage officers</Button>}/>
     {error && <div className="notice warn" role="alert">{error}</div>}
+    {rows && <TwoPersonStatus on={twoPerson} directors={list.filter(isActiveDirector).length} nominations={list.filter(r => liveNomination(r) && !isActiveDirector(r))} meUid={identity!.uid}/>}
 
     <div className="ev-summary" aria-label="Officer access summary">
       <button className={`ev-tile desk-tile ${pending.length ? "amber" : ""}`} onClick={() => go("Officer Access", { tab: "pending" })}><span>Awaiting approval</span><strong>{rows ? pending.length : "…"}</strong><small>{pending.length ? "Open the requests" : "Nothing waiting"}</small></button>
@@ -82,6 +84,6 @@ function PendingRow({ rec }: { rec: ProfileRecord }) {
   return <li>
     <div><strong>{rec.name || "(no name)"}</strong><small>{rec.email} · asked for {role} · {rec.region}{rec.jobTitle ? ` · ${rec.jobTitle}` : ""} · {fmtDateTime(rec.createdAt ?? undefined)}</small>
       {rec.institutionAffiliation && <small className="danger-text">Declares affiliation: {rec.institutionAffiliation}</small>}</div>
-    <div className="row-actions"><Button small kind="secondary" onClick={() => go("Officer Access", { tab: "pending" })}>Review</Button><Button small onClick={approve} disabled={busy}>Approve</Button></div>
+    <div className="row-actions"><Button small kind="secondary" onClick={() => go("Officer Access", { tab: "pending" })}>{role === "Director" ? "Review (needs two Directors)" : "Review"}</Button>{role !== "Director" && <Button small onClick={approve} disabled={busy}>Approve</Button>}</div>
   </li>;
 }
