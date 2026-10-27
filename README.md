@@ -225,7 +225,7 @@ Applications move through **Scrutiny → EVC → Committee → Decision**. Each 
 | "Sign out and clear this browser" for shared computers | Settings |
 | Dev server bound to `localhost` | `vite.config.ts` |
 | Patched dependency: `@grpc/grpc-js` ≥ 1.13.6 | `pnpm-workspace.yaml` |
-| Preview workflow never runs for pull requests from forks, so they can't reach secrets | `firebase-hosting-pull-request.yml` |
+| Preview workflow builds and checks every pull request, and never runs for forks, so they can't reach secrets | `firebase-hosting-pull-request.yml` |
 
 ### Latest security check
 
@@ -287,7 +287,7 @@ flowchart LR
     Checks --> Cred{"Deploy secret<br/>present?"}
     Cred -->|yes| Live["Deploy to live site"]
     Cred -->|no| Skip["Skip deploy<br/>(notice, run stays green)"]
-    PR["Pull request from<br/>this repository"] --> Preview["Preview channel deploy"]
+    PR["Pull request from<br/>this repository"] --> PRChecks["Install → type-check<br/>→ tests → build"] --> Preview["Preview channel<br/>(link on the PR, 7 days)"]
     Rules["Change to firestore.rules"] --> Manual["Run pnpm test:rules, then<br/>firebase deploy --only firestore:rules"]
 ```
 
@@ -295,7 +295,7 @@ flowchart LR
 - **The Firebase web config,** as variables *or* secrets (the workflow reads either): `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID`. Without them the site builds but shows "Firebase is not configured".
 - **The deploy secret** `FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0`. Create it with `firebase init hosting:github` (answer **No** to overwriting `firebase.json` or the workflows). Without it, the run still checks and builds, then skips publishing.
 
-**Pull-request previews:** `firebase-hosting-pull-request.yml` deploys a preview channel for pull requests opened from this repository, never from forks. It deploys the repository as checked out, *without a build step*, so add `pnpm install` and `pnpm build` (with the `VITE_FIREBASE_*` values) before the deploy step if you want working previews.
+**Pull-request previews:** `firebase-hosting-pull-request.yml` runs the same install, type-check, tests and build for every pull request opened from this repository, then deploys it to a temporary preview channel. The preview link is posted on the pull request and expires after 7 days. Pull requests from forks are skipped, so they never reach your secrets. Previews never touch the live site.
 
 **Manual deploy (fallback):**
 
@@ -336,4 +336,3 @@ For a **new** Firebase project (the live project is already set up):
 - **Removing someone's profile doesn't delete their Firebase login.** It only removes their Niyantran access. Fully disabling the login needs a server (Cloud Functions).
 - **No OCR.** Scanned PDFs and images need manual transcription. Original files are kept in memory only for the session; the stored SHA-256 fingerprint ties each file to the record.
 - **Simulations cover document consistency only.** SLA, deposit, lease and undertaking checks are not simulated.
-- **Pull-request previews don't build the site** until a build step is added to that workflow.
