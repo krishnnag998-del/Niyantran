@@ -36,6 +36,7 @@ service cloud.firestore {
         && (d.status != 'active' || d.role in roles())
         && d.reviewedBy == request.auth.uid && d.reviewedAt == request.time
         && optText(d, 'reviewNote', 500)
+        && (resource == null || d.email == resource.data.email)
         && (request.auth.uid != userId || (d.status == 'active' && d.role == 'Director'));
     }
 
@@ -59,7 +60,8 @@ service cloud.firestore {
       allow create: if ownRequest(userId) || directorWrite(userId) || claimDirector(userId);
       // Applicants may revise a pending or rejected request; active and disabled profiles change only through a Director.
       allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId) || claimDirector(userId);
-      allow delete: if false;
+      // Removes Niyantran access only; the Firebase login itself is untouched.
+      allow delete: if isDirector() && request.auth.uid != userId;
     }
 
     match /{document=**} {

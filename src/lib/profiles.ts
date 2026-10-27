@@ -1,5 +1,5 @@
-import { collection, doc, onSnapshot, serverTimestamp, setDoc, updateDoc, type Firestore } from "firebase/firestore";
-import type { User } from "firebase/auth";
+import { collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc, updateDoc, type Firestore } from "firebase/firestore";
+import { sendPasswordResetEmail, type Auth, type User } from "firebase/auth";
 import type { AuthProfile } from "./auth-profile";
 import { ROLES, type Role } from "./types";
 
@@ -100,6 +100,37 @@ export async function reviewProfile(db: Firestore, rec: ProfileRecord, change: {
   if (!region) throw new Error("Region is required.");
   await updateDoc(profileRef(db, rec.uid), { status: change.status, role: change.role ?? rec.role, region, reviewNote: change.note?.trim() ?? "", ...reviewStamp(by) });
 }
+
+export type ProfileEdit = { name: string; jobTitle: string; region: string; institutionAffiliation: string; phone: string; role: Role | null };
+
+export function validateEdit(p: ProfileEdit): string[] {
+  const out: string[] = [];
+  if (!p.name.trim() || p.name.trim().length > 120) out.push("Name is required (up to 120 characters).");
+  if (!p.region.trim() || p.region.trim().length > 60) out.push("Region is required (up to 60 characters).");
+  if (p.jobTitle.trim().length > 120) out.push("Job title is too long.");
+  if (p.phone.trim().length > 30) out.push("Phone number is too long.");
+  if (p.institutionAffiliation.trim().length > 160) out.push("Affiliation is too long.");
+  if (p.role && !ROLES.includes(p.role)) out.push("Choose a valid role.");
+  return out;
+}
+
+// A Director correcting an officer's details. The email stays tied to the login and cannot be edited.
+export async function editProfile(db: Firestore, rec: ProfileRecord, p: ProfileEdit, by: Reviewer) {
+  const errors = validateEdit(p);
+  if (errors.length) throw new Error(errors.join(" "));
+  if (rec.uid === by.uid && p.role !== "Director") throw new Error("You cannot remove your own Director role.");
+  if (rec.status === "active" && !p.role) throw new Error("An active officer needs a role.");
+  await updateDoc(profileRef(db, rec.uid), { name: p.name.trim(), jobTitle: p.jobTitle.trim(), region: p.region.trim(), institutionAffiliation: p.institutionAffiliation.trim(),
+    phone: p.phone.trim(), role: p.role, reviewNote: rec.reviewNote, ...reviewStamp(by) });
+}
+
+// Removes the officer's Niyantran profile, so they lose access. Their Firebase login itself is not deleted.
+export async function deleteProfile(db: Firestore, rec: ProfileRecord, by: Reviewer) {
+  if (rec.uid === by.uid) throw new Error("You cannot delete your own profile.");
+  await deleteDoc(profileRef(db, rec.uid));
+}
+
+export const sendReset = (auth: Auth, rec: ProfileRecord) => sendPasswordResetEmail(auth, rec.email);
 
 // For someone who has signed in once (so has an account ID) but whose request was never filed.
 export async function createProfile(db: Firestore, uid: string, p: { name: string; email: string; role: Role; region: string; jobTitle: string }, by: Reviewer) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessProblem, isDirectorEmail, parseProfile, toAuthProfile, validateRequest } from "./profiles";
+import { accessProblem, isDirectorEmail, parseProfile, toAuthProfile, validateEdit, validateRequest } from "./profiles";
 
 // Synthetic accounts only.
 const active = { name: "Demo Officer", email: "Demo.Officer@example.org", role: "Scrutiny Officer", region: "North", status: "active" };
@@ -28,6 +28,13 @@ describe("officer profiles", () => {
     expect(isDirectorEmail(" KrishnNag998@Gmail.com ")).toBe(true);
     expect(isDirectorEmail("someone.else@example.org")).toBe(false);
     expect(isDirectorEmail(null)).toBe(false);
+  });
+
+  it("validates a Director's edits to an officer", () => {
+    const ok = { name: "Demo Officer", jobTitle: "", region: "North", institutionAffiliation: "", phone: "", role: "Scrutiny Officer" as const };
+    expect(validateEdit(ok)).toEqual([]);
+    expect(validateEdit({ ...ok, region: "" })).toHaveLength(1);
+    expect(validateEdit({ ...ok, role: "Admin" as never })).toHaveLength(1);
   });
 
   it("reads Firestore timestamps", () => {
