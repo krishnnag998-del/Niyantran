@@ -253,7 +253,7 @@ GitHub Actions runs `typecheck` and `test` before every deploy.
 ## Deployment
 
 **Website:** `.github/workflows/firebase-hosting-deploy.yml` installs, type-checks, tests, builds and deploys to the live channel on every push to `main`. It needs, in **GitHub → Settings → Secrets and variables → Actions**:
-- **Variables:** `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID`.
+- **Variables or secrets** (the workflow reads either): `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID`.
 - **Secret:** `FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0`. Create it with `firebase init hosting:github` (answer **No** to overwriting `firebase.json` or the workflow), or manually from a service account with the **Firebase Hosting Admin** role.
 
 If the build variables are missing, the site still builds but shows "Firebase is not configured" and nobody can sign in.
