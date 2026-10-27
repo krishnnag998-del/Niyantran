@@ -108,7 +108,7 @@ function friendlyAuthError(reason: unknown) {
   if (code === "permission-denied") return "The database refused this change. Make sure the latest firestore.rules are deployed, then try again.";
   if (code === "auth/popup-closed-by-user") return "The Google sign-in window was closed before finishing.";
   if (code === "auth/email-already-in-use") return "An account already uses this email. Sign in instead or use password reset.";
-  if (code === "auth/weak-password") return "Choose a password with at least 6 characters.";
+  if (code === "auth/weak-password") return "Choose a password with at least 8 characters.";
   if (code === "auth/invalid-email") return "Enter a valid email address.";
   if (code === "auth/invalid-credential") return "Email or password is incorrect.";
   return reason instanceof Error ? reason.message : "Authentication failed. Please try again.";
@@ -144,6 +144,7 @@ export default function AuthPage({ loading = false, access, user, error: configE
     const client = auth;
     if (!client) return;
     if (mode === "signup") {
+      if (password.length < 8) { setError("Choose a password with at least 8 characters."); return; }
       if (password !== confirmPassword) { setError("Passwords do not match."); return; }
       const problems = validateRequest(details);
       if (problems.length) { setError(problems.join(" ")); return; }
@@ -203,9 +204,9 @@ export default function AuthPage({ loading = false, access, user, error: configE
           <form onSubmit={submit} className="auth-form">
             {mode === "signup" && <label>Full name<input type="text" autoComplete="name" required maxLength={120} value={details.name} onChange={event => setDetails({ ...details, name: event.target.value })} placeholder="Your full name"/></label>}
             <label>Email address<input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} placeholder="name@organization.gov.in"/></label>
-            <label>Password<input type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={6} required value={password} onChange={event => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 6 characters" : "Enter your password"}/></label>
+            <label>Password<input type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={mode === "signup" ? 8 : undefined} required value={password} onChange={event => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 8 characters" : "Enter your password"}/></label>
             {mode === "signup"
-              ? <><label>Confirm password<input type="password" autoComplete="new-password" minLength={6} required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Enter your password again"/></label>
+              ? <><label>Confirm password<input type="password" autoComplete="new-password" minLength={8} required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="Enter your password again"/></label>
                 <RequestFields value={details} onChange={setDetails} withName={false}/></>
               : <button type="button" className="auth-text-button" onClick={resetPassword} disabled={busy}>Forgot password?</button>}
             <button className="auth-button" type="submit" disabled={busy || Boolean(configError)}>{busy ? "Please wait…" : mode === "signup" ? "Create account and request access" : "Sign in securely"}</button>

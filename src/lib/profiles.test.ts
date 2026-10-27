@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessProblem, directorStep, liveNomination, parseProfile, toAuthProfile, validateEdit, validateRequest } from "./profiles";
+import { accessProblem, directorStep, liveNomination, parseProfile, removalStep, toAuthProfile, validateEdit, validateRequest } from "./profiles";
 
 // Synthetic accounts only.
 const active = { name: "Demo Officer", email: "Demo.Officer@example.org", role: "Scrutiny Officer", region: "North", status: "active" };
@@ -44,6 +44,23 @@ describe("officer profiles", () => {
     it("never offers to promote yourself or an existing Director", () => {
       expect(directorStep(parseProfile("dirA", active), "dirA", true)).toBe("self");
       expect(directorStep(parseProfile("dirB", { ...active, role: "Director" }), "dirA", true)).toBe("already");
+    });
+  });
+
+  describe("two-person rule for removing Directors", () => {
+    const dirB = { ...active, role: "Director" };
+    it("needs a removal request before anyone can remove a Director", () => {
+      expect(removalStep(parseProfile("dirB", dirB), "dirA")).toBe("request");
+      expect(removalStep(parseProfile("officer", active), "dirA")).toBe("not-director");
+    });
+    it("needs a different Director to confirm the request", () => {
+      const requested = parseProfile("dirB", { ...dirB, removalRequestedBy: "dirA", removalRequestedAt: "2026-10-27T10:00:00.000Z" });
+      expect(removalStep(requested, "dirA")).toBe("awaiting-other");
+      expect(removalStep(requested, "dirC")).toBe("confirm");
+    });
+    it("ignores a removal request made before the Director's latest approval", () => {
+      const stale = parseProfile("dirB", { ...dirB, removalRequestedBy: "dirA", removalRequestedAt: "2026-10-27T10:00:00.000Z", directorApprovedAt: "2026-10-27T12:00:00.000Z" });
+      expect(removalStep(stale, "dirC")).toBe("request");
     });
   });
 
