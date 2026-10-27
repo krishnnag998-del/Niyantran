@@ -44,7 +44,7 @@ pnpm build
 ## Firebase authentication and account setup
 
 1. In Firebase Console, enable **Email/Password** and **Google** under Authentication → Sign-in method. Add the deployed Hosting domain under Authentication → Settings → Authorized domains if it is not already present.
-2. Create email/password accounts under Authentication → Users. Google users can sign in with Google; the first sign-in creates an Authentication identity, but it does not grant application access.
+2. Users can select **Create an account** on the sign-in screen to register with email/password, or sign in with Google. New Firebase Auth accounts do not grant application access by themselves.
 3. For each person, create a Firestore document at `profiles/{Firebase Auth UID}` with string fields `name`, `email`, `phone`, `jobTitle`, `region`, and `institutionAffiliation`, plus `role` and `status`. Use an existing officer role (`Director`, `Regional Officer`, `Scrutiny Officer`, `EVC Coordinator`, or `Committee Member`) and set `status` to `active`. Profiles without an active recognized role are denied access.
 4. Client access to profile documents is read-only. Assign or change roles through Firebase Console/Admin SDK only; do not make role assignment available to end users.
 

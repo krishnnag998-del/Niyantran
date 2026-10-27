@@ -31,6 +31,13 @@ function readProfile(uid: string, authEmail: string | null, value: Record<string
   };
 }
 
+function profileAccessError(reason: { code?: string }) {
+  if (reason.code === "permission-denied") {
+    return "Your account cannot read officer profiles. Ask the administrator to deploy the Firestore profile security rules.";
+  }
+  return "Firebase sign-in succeeded, but the officer profile service is unavailable. Enable Cloud Firestore, create the database, and deploy its security rules before signing in.";
+}
+
 export default function AuthGate() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -67,7 +74,7 @@ export default function AuthGate() {
       setProfile(snapshot.exists() ? readProfile(user.uid, user.email, snapshot.data()) : null);
       setProfileLoading(false);
     }, reason => {
-      setError(reason.message);
+      setError(profileAccessError(reason));
       setProfileLoading(false);
     });
   }, [user]);
