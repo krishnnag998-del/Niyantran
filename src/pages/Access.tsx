@@ -286,7 +286,7 @@ function AddProfile({ existing, onClose }: { existing: ProfileRecord[]; onClose:
   return <Modal title="Add an officer by account ID" onClose={onClose} footer={<><Button kind="secondary" onClick={onClose}>Cancel</Button><Button onClick={submit} disabled={busy || !!clash || !uid.trim()}>Create active profile</Button></>}>
     <p className="muted">For someone who has signed in but has not sent a request. Their account ID appears on their sign-in screen. The email must match the one they sign in with.</p>
     <div className="form-grid">
-      <Field label="Account ID" wide hint={clash ? `A profile already exists for ${clash.name || "this account"}. Review it in the list instead.` : undefined}><input value={uid} onChange={e => setUid(e.target.value)} placeholder="e.g. 3tKbrlnMsPPGOdSo4OjMWsnKL6d2"/></Field>
+      <Field label="Account ID" wide hint={clash ? `A profile already exists for ${clash.name || "this account"}. Review it in the list instead.` : undefined}><input value={uid} onChange={e => setUid(e.target.value)} placeholder="Paste the account ID from their sign-in screen"/></Field>
       <Field label="Full name"><input value={name} onChange={e => setName(e.target.value)}/></Field>
       <Field label="Email"><input type="email" value={email} onChange={e => setEmail(e.target.value)}/></Field>
       <Field label="Officer role"><select value={role} onChange={e => setRole(e.target.value as Role)}>{ROLES.filter(r => r !== "Director").map(r => <option key={r}>{r}</option>)}</select></Field>
