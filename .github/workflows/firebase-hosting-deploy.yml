@@ -50,7 +50,22 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ vars.VITE_FIREBASE_MEASUREMENT_ID || secrets.VITE_FIREBASE_MEASUREMENT_ID }}
 
+      # Secrets can't be tested in an `if:` directly, so check for the deploy credential here.
+      # Without it, the run still checks and builds the site but skips publishing.
+      - name: Check deploy credential
+        id: credential
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0 }}
+        run: |
+          if [ -n "$SERVICE_ACCOUNT" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Deploy skipped::Secret FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0 is not set. The site was checked and built but not published. Deploy manually with: firebase deploy --only hosting"
+          fi
+
       - name: Deploy production site
+        if: steps.credential.outputs.present == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_NIYANTRAN_4FEE0 }}

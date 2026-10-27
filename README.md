@@ -258,6 +258,13 @@ GitHub Actions runs `typecheck` and `test` before every deploy.
 
 If the build variables are missing, the site still builds but shows "Firebase is not configured" and nobody can sign in.
 
+If the deploy secret is missing, the run still type-checks, tests and builds, then **skips publishing** with a "Deploy skipped" notice. Publish manually from your computer instead:
+
+```bash
+pnpm build
+firebase deploy --only hosting
+```
+
 **Security rules are not deployed by CI.** After changing `firestore.rules`, run the rules tests and then:
 
 ```bash
