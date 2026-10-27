@@ -1017,3 +1017,8 @@ input.narrow { flex: 0 0 72px !important; min-width: 0 !important; }
   .auth-mobile-brand { margin-bottom: 32px; }
   .auth-card h2 { font-size: 27px; }
 }
+.auth-form select { width: 100%; min-height: 44px; padding: 0 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; font: 400 13px var(--sans); }
+.auth-form label small { font-weight: 500; color: var(--text-3); }
+.auth-button.secondary { margin-top: 10px; width: 100%; color: var(--text); background: var(--surface); border: 1px solid var(--line); }
+.auth-button.secondary:hover:not(:disabled) { background: var(--surface-3); }
+.access-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 4px 16px; }

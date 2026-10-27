@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Activity, Bell, BookOpen, Building2, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileSearch, FileText, Gavel, History, Landmark,
-  LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, ShieldCheck, Users, X,
+  LayoutDashboard, ListChecks, LogOut, Menu, Search, Settings, ShieldCheck, UserCheck, Users, X,
 } from "lucide-react";
 import { ThemeToggleButton } from "@/components/ui/skiper-ui/skiper26";
 import { Badge, Toasts, severityTone } from "@/components/kit";
 import { versionInForce } from "@/lib/engine";
 import { NavContext, type Params } from "@/lib/nav";
 import { useStore } from "@/lib/store";
+import AccessPage from "@/pages/Access";
 import { isMine } from "@/pages/Alerts";
 import AlertsPage from "@/pages/Alerts";
 import ApplicationsPage from "@/pages/Applications";
@@ -22,7 +23,7 @@ import SettingsPage from "@/pages/Settings";
 import Setup from "@/pages/Setup";
 import TasksPage from "@/pages/Tasks";
 
-type NavEntry = { label: string; page: string; icon: typeof LayoutDashboard; stage?: string };
+type NavEntry = { label: string; page: string; icon: typeof LayoutDashboard; stage?: string; directorOnly?: boolean };
 
 // Queue entries are filtered views of the Applications register, not separate modules.
 const NAV: { group: string; items: NavEntry[] }[] = [
@@ -42,13 +43,14 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     { label: "Alerts & Escalations", page: "Alerts & Escalations", icon: Bell },
     { label: "Institutions", page: "Institutions", icon: Building2 },
     { label: "Audit Trail", page: "Audit Trail", icon: History },
+    { label: "Officer Access", page: "Officer Access", icon: UserCheck, directorOnly: true },
   ] },
 ];
 
 const PAGES: Record<string, () => React.ReactElement> = {
   "Dashboard": Dashboard, "Aaj Ka Kaam": TasksPage, "Applications": ApplicationsPage, "Compliance Monitor": CompliancePage,
   "EVC Management": EvcPage, "Evidence Intelligence": EvidencePage, "Rulebook (APH)": RulebookPage, "Alerts & Escalations": AlertsPage, "Audit Trail": AuditPage,
-  "Institutions": InstitutionsPage, "Settings": SettingsPage,
+  "Institutions": InstitutionsPage, "Settings": SettingsPage, "Officer Access": AccessPage,
 };
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join("");
@@ -70,11 +72,12 @@ function Colonnade() {
 }
 
 function Sidebar({ page, params, go, open, close, collapsed, toggle, onSignOut }: { page: string; params: Params; go: (p: string, ps?: Params) => void; open: boolean; close: () => void; collapsed: boolean; toggle: () => void; onSignOut: () => void }) {
-  const { state, alerts, me } = useStore();
+  const { state, alerts, me, identity } = useStore();
   const myTasks = state.tasks.filter(t => t.status === "open" && t.owner === me?.id).length;
   const openAlerts = alerts.filter(a => !state.alerts[a.id]?.resolvedAt).length;
   const count = (e: NavEntry) => e.stage ? state.applications.filter(a => a.stage === e.stage).length
     : e.page === "Aaj Ka Kaam" ? myTasks : e.page === "Alerts & Escalations" ? openAlerts : 0;
+  const visible = (e: NavEntry) => !e.directorOnly || identity?.role === "Director";
   return <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Main navigation">
     <div className="identity">
       <img className="aicte-logo" src="/brand/aicte-logo.png" alt="AICTE logo" />
@@ -87,7 +90,7 @@ function Sidebar({ page, params, go, open, close, collapsed, toggle, onSignOut }
     </div>
     <nav>{NAV.map(g => <div key={g.group} className="nav-group">
       <div className="nav-label">{g.group}</div>
-      {g.items.map(e => { const Icon = e.icon; const n = count(e); const active = isActive(e, page, params);
+      {g.items.filter(visible).map(e => { const Icon = e.icon; const n = count(e); const active = isActive(e, page, params);
         return <button key={e.label} className={`nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} title={collapsed ? e.label : undefined}
           onClick={() => { go(e.page, e.stage ? { stage: e.stage } : {}); close(); }}>
           <Icon size={17}/><span>{e.label}</span>{n > 0 && <i aria-label={`${n} open`}>{n}</i>}

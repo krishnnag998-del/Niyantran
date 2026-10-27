@@ -1,9 +1,50 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function roles() { return ['Director', 'Regional Officer', 'Scrutiny Officer', 'EVC Coordinator', 'Committee Member']; }
+    function myPath() { return /databases/$(database)/documents/profiles/$(request.auth.uid); }
+    function isDirector() {
+      return signedIn() && exists(myPath())
+        && get(myPath()).data.status == 'active' && get(myPath()).data.role == 'Director';
+    }
+    function text(d, k, minLen, maxLen) { return k in d && d[k] is string && d[k].size() >= minLen && d[k].size() <= maxLen; }
+    function optText(d, k, maxLen) { return !(k in d) || (d[k] is string && d[k].size() <= maxLen); }
+    function commonFields(d) {
+      return text(d, 'name', 1, 120) && text(d, 'email', 3, 254) && text(d, 'region', 1, 60)
+        && optText(d, 'phone', 30) && optText(d, 'jobTitle', 120) && optText(d, 'institutionAffiliation', 160);
+    }
+
+    // A user filing their own access request: always pending, their own email, and no role.
+    function ownRequest(userId) {
+      let d = request.resource.data;
+      return signedIn() && request.auth.uid == userId
+        && d.keys().hasOnly(['name', 'email', 'phone', 'jobTitle', 'region', 'institutionAffiliation', 'requestedRole', 'status', 'createdAt', 'updatedAt'])
+        && d.status == 'pending' && d.requestedRole in roles() && commonFields(d)
+        && d.email == request.auth.token.email
+        && d.updatedAt == request.time;
+    }
+
+    // A Director's decision. A Director can never remove their own Director access.
+    function directorWrite(userId) {
+      let d = request.resource.data;
+      return isDirector()
+        && d.keys().hasOnly(['name', 'email', 'phone', 'jobTitle', 'region', 'institutionAffiliation', 'requestedRole', 'role', 'status',
+                             'createdAt', 'updatedAt', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'reviewNote'])
+        && d.status in ['pending', 'active', 'rejected', 'disabled'] && commonFields(d)
+        && (d.status != 'active' || d.role in roles())
+        && d.reviewedBy == request.auth.uid && d.reviewedAt == request.time
+        && optText(d, 'reviewNote', 500)
+        && (request.auth.uid != userId || (d.status == 'active' && d.role == 'Director'));
+    }
+
     match /profiles/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
+      allow read: if signedIn() && (request.auth.uid == userId || isDirector());
+      allow create: if ownRequest(userId) || directorWrite(userId);
+      // Applicants may revise a pending or rejected request; active and disabled profiles change only through a Director.
+      allow update: if (ownRequest(userId) && resource.data.status in ['pending', 'rejected']) || directorWrite(userId);
+      allow delete: if false;
     }
 
     match /{document=**} {
