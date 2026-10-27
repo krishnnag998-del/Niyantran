@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  Activity, Bell, BookOpen, Building2, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileText, Gavel, History, Landmark,
+  Activity, Bell, BookOpen, Building2, ChevronRight, ChevronsLeft, ChevronsRight, FileCheck2, FileSearch, FileText, Gavel, History, Landmark,
   LayoutDashboard, ListChecks, Menu, Search, Settings, ShieldCheck, Users, X,
 } from "lucide-react";
 import { ThemeToggleButton } from "@/components/ui/skiper-ui/skiper26";
@@ -15,6 +15,7 @@ import AuditPage from "@/pages/Audit";
 import CompliancePage from "@/pages/Compliance";
 import Dashboard from "@/pages/Dashboard";
 import EvcPage from "@/pages/Evc";
+import EvidencePage from "@/pages/Evidence";
 import InstitutionsPage from "@/pages/Institutions";
 import RulebookPage from "@/pages/Rulebook";
 import SettingsPage from "@/pages/Settings";
@@ -29,6 +30,7 @@ const NAV: { group: string; items: NavEntry[] }[] = [
     { label: "Overview", page: "Dashboard", icon: LayoutDashboard },
     { label: "Aaj Ka Kaam", page: "Aaj Ka Kaam", icon: ListChecks },
     { label: "Applications", page: "Applications", icon: FileText },
+    { label: "Evidence Intelligence", page: "Evidence Intelligence", icon: FileSearch },
     { label: "Scrutiny Queue", page: "Applications", icon: FileCheck2, stage: "Scrutiny" },
     { label: "EVC Management", page: "EVC Management", icon: Users },
     { label: "Committee Review", page: "Applications", icon: ShieldCheck, stage: "Committee" },
@@ -45,7 +47,7 @@ const NAV: { group: string; items: NavEntry[] }[] = [
 
 const PAGES: Record<string, () => React.ReactElement> = {
   "Dashboard": Dashboard, "Aaj Ka Kaam": TasksPage, "Applications": ApplicationsPage, "Compliance Monitor": CompliancePage,
-  "EVC Management": EvcPage, "Rulebook (APH)": RulebookPage, "Alerts & Escalations": AlertsPage, "Audit Trail": AuditPage,
+  "EVC Management": EvcPage, "Evidence Intelligence": EvidencePage, "Rulebook (APH)": RulebookPage, "Alerts & Escalations": AlertsPage, "Audit Trail": AuditPage,
   "Institutions": InstitutionsPage, "Settings": SettingsPage,
 };
 
@@ -184,7 +186,7 @@ export default function App() {
       <Sidebar page={page} params={params} go={go} open={mobile} close={() => setMobile(false)} collapsed={collapsed} toggle={toggle}/>
       {mobile && <div className="mobile-overlay" onClick={() => setMobile(false)}/>}
       <div className="shell">
-        <Header label={params.appId ? "Case file" : pageLabel(page, params)} mobile={() => setMobile(true)} go={go}/>
+        <Header label={params.appId && page === "Applications" ? "Case file" : pageLabel(page, params)} mobile={() => setMobile(true)} go={go}/>
         <main id="main"><Page key={`${page}:${params.appId ?? ""}:${params.stage ?? ""}:${params.q ?? ""}`}/>
           <footer>
             <span><strong>Niyantran</strong> · Regulatory Command Desk · Prototype workflow system for AICTE approval processes, not an official AICTE service</span>
